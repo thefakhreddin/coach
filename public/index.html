@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Coach</title>
+  <meta name="theme-color" content="#2a78d6">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Coach">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon.svg">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <section id="login" class="login" hidden>
+      <form id="login-form" class="card">
+        <div class="logo">🏋️</div>
+        <h1>Coach</h1>
+        <p class="muted">Gym plans and logs for Amir and Rozhin</p>
+        <input id="password" type="password" placeholder="Password" autocomplete="current-password" required>
+        <button class="btn primary" type="submit">Sign in</button>
+        <p id="login-error" class="error" role="alert"></p>
+      </form>
+    </section>
+
+    <section id="main" hidden>
+      <header class="topbar">
+        <div class="people" id="people" role="tablist" aria-label="Person"></div>
+        <button class="icon-btn" id="refresh" title="Reload from Notion" aria-label="Reload from Notion">⟳</button>
+      </header>
+      <div id="banner" class="banner" hidden></div>
+      <main id="view" class="view" aria-live="polite"></main>
+      <nav class="tabbar" id="tabs" aria-label="Sections">
+        <button data-tab="today"><span>🏋️</span>Today</button>
+        <button data-tab="plan"><span>📋</span>Plan</button>
+        <button data-tab="history"><span>🗓️</span>History</button>
+        <button data-tab="progress"><span>📈</span>Progress</button>
+      </nav>
+    </section>
+    <div id="toast" class="toast" role="status" hidden></div>
+  </div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

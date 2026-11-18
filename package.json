@@ -1,0 +1,17 @@
+{
+  "name": "coach",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Gym plans and workout logging for Amir and Rozhin, backed by Notion.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "demo": "node server.js --demo",
+    "test": "node --test test/*.test.js",
+    "deploy": "wrangler deploy"
+  },
+  "engines": { "node": ">=20.12" },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
