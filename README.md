@@ -71,8 +71,17 @@ npx wrangler secret put SESSION_SECRET
 npm run deploy
 ```
 
-Wrangler prints your URL. Open it on your phone, sign in, and use **Share → Add to Home Screen** so it opens like an app.
+Wrangler prints your URL. Open it on your phone and add it to the home screen (step 3).
 To update after code changes, run `git pull` and then `npm run deploy` again.
+
+## 3. Put it on your iPhone home screen
+
+1. Open your app URL in **Safari**. It has to be Safari: other browsers on iPhone can't install web apps the same way.
+2. Tap **Share** (the square with the arrow), then **Add to Home Screen**, then **Add**.
+3. Open **Coach** from the home screen and sign in.
+
+It then opens full-screen like a normal app, with its own icon, light and dark mode, and room for the notch and home bar. It still opens with no signal, and a workout you haven't saved stays on the phone until you tap **Save to Notion**.
+The home-screen app keeps its own login, separate from Safari, so you sign in once inside it. Rozhin does the same on her phone.
 
 ## 2b. Or run it on your own computer
 

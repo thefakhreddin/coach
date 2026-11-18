@@ -13,11 +13,16 @@ const e1rm = (s) => (s.weight && s.reps ? s.weight * (1 + Math.min(s.reps, 15) /
 const round1 = (n) => Math.round(n * 10) / 10;
 
 async function api(path, opts = {}) {
-  const res = await fetch(`/api/${path}`, {
+  let res;
+  try {
+    res = await fetch(`/api/${path}`, {
     ...opts,
     headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
     body: opts.body ? JSON.stringify(opts.body) : undefined,
-  });
+    });
+  } catch {
+    throw new Error('No connection. Check your signal and try again.');
+  }
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && path !== 'login') { showLogin(); throw new Error('Please sign in'); }
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
@@ -69,7 +74,18 @@ $('#login-form').addEventListener('submit', async (e) => {
   try {
     await api('login', { method: 'POST', body: { password: $('#password').value } });
     $('#password').value = '';
-    start();
+    // "Add to Home Screen" hint for iPhone Safari (hidden once installed or dismissed).
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+if (isIOS && !standalone && !localStorage.getItem('install-hint-closed')) $('#install-hint').hidden = false;
+$('#install-close').addEventListener('click', () => {
+  localStorage.setItem('install-hint-closed', '1');
+  $('#install-hint').hidden = true;
+});
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+
+start();
   } catch (err) { $('#login-error').textContent = err.message; }
 });
 
@@ -206,7 +222,8 @@ async function renderToday(view) {
   view.innerHTML = `
     <div class="today-head">
       <div class="muted small">${esc(fmtDate(todayISO()))} · ${esc(routine.block || '')} · ${doneThisWeek} session${doneThisWeek === 1 ? '' : 's'} this week</div>
-      <h1>${planned.label ? `Today: ${esc(planned.label)}` : 'Log a workout'}</h1>
+      <h1 class="large-title">Today</h1>
+      ${planned.label ? `<div class="muted">Planned: ${esc(planned.label)}</div>` : ''}
     </div>
     <div class="card">
       <label>What are you doing?</label>
@@ -220,7 +237,10 @@ async function renderToday(view) {
       ${draft.choice.kind === 'strength' && routine.days[draft.choice.letter] ? `<p class="muted small" style="margin:.6rem 0 0">${esc(routine.days[draft.choice.letter].title)}</p>` : ''}
     </div>
     <div id="exercises" style="display:grid;gap:1rem"></div>
-    <button class="btn block ghost" id="add-ex">+ Add exercise</button>
+    <form class="add-ex" id="add-ex">
+      <input id="add-ex-name" placeholder="Add an exercise" autocomplete="off" autocapitalize="sentences" enterkeyhint="done" aria-label="Exercise name">
+      <button class="btn tinted" type="submit">Add</button>
+    </form>
     <div class="card" style="display:grid;gap:.7rem">
       <div><label for="cardio">Cardio</label><input id="cardio" placeholder="e.g. Incline walk 30 min, 6%, 5 km/h" value="${esc(draft.cardio)}"></div>
       <div class="grid3">
@@ -289,9 +309,13 @@ async function renderToday(view) {
     renderExercises();
   });
 
-  $('#add-ex').addEventListener('click', () => {
-    const name = prompt('Exercise name');
+  $('#add-ex').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const input = $('#add-ex-name');
+    const name = input.value;
     if (!name?.trim()) return;
+    input.value = '';
+    input.blur();
     const prev = last[exKey(name)];
     draft.exercises.push({ name: name.trim(), target: '', note: '', sets: Array.from({ length: 3 }, (_, i) => ({ weight: prev?.sets[i]?.weight ?? '', reps: '', seconds: '', hint: prev?.sets[i]?.reps ?? '', done: false })) });
     saveDraft(draft);
@@ -349,7 +373,7 @@ async function renderToday(view) {
       renderTabs();
       render();
     } catch (err) {
-      toast(err.message);
+      toast(`${err.message} Your workout is still saved on this phone.`);
       btn.disabled = false;
       btn.textContent = 'Save to Notion';
     }
@@ -394,7 +418,7 @@ function workoutsThisWeek(workouts) {
 // ---------------- Plan (Notion pages) ----------------
 async function renderPlan(view) {
   const tabs = [['routine', 'Routine'], ['diet', 'Diet'], ['overview', 'Profile & week']];
-  view.innerHTML = `<div class="chips" id="doc-tabs">${tabs.map(([k, l]) => `<button data-doc="${k}" aria-pressed="${k === state.planDoc}">${l}</button>`).join('')}</div>
+  view.innerHTML = `<h1 class="large-title">Plan</h1><div class="chips" id="doc-tabs">${tabs.map(([k, l]) => `<button data-doc="${k}" aria-pressed="${k === state.planDoc}">${l}</button>`).join('')}</div>
     <div class="card doc" id="doc"><div class="spinner">Loading from Notion…</div></div>`;
   $('#doc-tabs').addEventListener('click', (e) => {
     const b = e.target.closest('[data-doc]');
@@ -462,10 +486,10 @@ function renderBlocks(blocks = []) {
 async function renderHistory(view) {
   const workouts = await load('workouts');
   if (!workouts.length) {
-    view.innerHTML = '<div class="card empty">No workouts logged yet. Log your first one from the Today tab.</div>';
+    view.innerHTML = '<h1 class="large-title">History</h1><div class="card empty">No workouts logged yet. Log your first one from the Today tab.</div>';
     return;
   }
-  view.innerHTML = workouts.map((w) => `
+  view.innerHTML = '<h1 class="large-title">History</h1>' + workouts.map((w) => `
     <div class="card workout">
       <div class="row spread">
         <div><h3>${esc(w.session || 'Workout')}</h3><div class="muted small">${w.date ? esc(fmtDate(w.date)) : ''}</div></div>
@@ -525,6 +549,7 @@ async function renderProgress(view) {
   const selected = exKeys.includes(state.exercise) ? state.exercise : exKeys[0];
 
   view.innerHTML = `
+    <h1 class="large-title">Progress</h1>
     <div class="tiles">
       <div class="tile"><div class="label">This week</div><div class="value">${thisWeek}</div><div class="sub">sessions (plan: 5)</div></div>
       <div class="tile"><div class="label">Total logged</div><div class="value">${workouts.length}</div><div class="sub">sessions</div></div>
@@ -534,10 +559,10 @@ async function renderProgress(view) {
 
     <div class="card">
       <h2>Log a weigh-in</h2>
-      <form id="weigh-form" class="grid3" style="align-items:end">
+      <form id="weigh-form" class="grid3">
         <div><label for="w-date">Date</label><input id="w-date" type="date" value="${todayISO()}" required></div>
-        <div><label for="w-kg">Weight kg</label><input id="w-kg" inputmode="decimal" placeholder="${latest ? latest.weight : ''}"></div>
-        <div><label for="w-waist">Waist cm</label><input id="w-waist" inputmode="decimal"></div>
+        <div><label for="w-kg">Weight</label><input id="w-kg" inputmode="decimal" placeholder="${latest ? latest.weight : 'kg'}"></div>
+        <div><label for="w-waist">Waist</label><input id="w-waist" inputmode="decimal" placeholder="cm"></div>
         <button class="btn primary" style="grid-column:1/-1" type="submit">Save weigh-in</button>
       </form>
     </div>
@@ -615,5 +640,16 @@ async function renderProgress(view) {
     } catch (err) { toast(err.message); }
   });
 }
+
+// "Add to Home Screen" hint for iPhone Safari (hidden once installed or dismissed).
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+if (isIOS && !standalone && !localStorage.getItem('install-hint-closed')) $('#install-hint').hidden = false;
+$('#install-close').addEventListener('click', () => {
+  localStorage.setItem('install-hint-closed', '1');
+  $('#install-hint').hidden = true;
+});
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
 start();
