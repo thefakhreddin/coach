@@ -81,7 +81,9 @@ async function loadMeals({ fresh = false } = {}) {
 function mealsFor(personId, iso) {
   const plan = state.meals?.people?.[personId];
   if (!plan) return [];
-  return [...plan.everyday, ...(plan.days[dayOf(iso)] || [])].sort((a, b) => a.minutes - b.minutes);
+  const all = [...plan.everyday, ...(plan.days[dayOf(iso)] || [])].sort((a, b) => a.minutes - b.minutes);
+  // Show a fasting window once, not once per skipped meal.
+  return all.filter((m, i) => !m.fasting || !all.slice(0, i).some((x) => x.fasting));
 }
 function dayTotals(meals) {
   return meals.filter((m) => !m.fasting).reduce((a, m) => ({
@@ -213,7 +215,18 @@ $('#login-form').addEventListener('submit', async (e) => {
   } catch (err) { $('#login-error').textContent = err.message; }
 });
 
+// Drop daily drafts older than two weeks (they are already in Notion).
+function cleanup() {
+  const cutoff = addDays(todayISO(), -14);
+  for (const k of Object.keys(localStorage)) {
+    const m = k.match(/^(?:gym|weigh):[a-z]+:(\d{4}-\d{2}-\d{2})$|^prep:(\d{4}-\d{2}-\d{2})$/);
+    const d = m && (m[1] || m[2]);
+    if (d && d < cutoff && !(store.get(PENDING) || []).includes(k)) localStorage.removeItem(k);
+  }
+}
+
 async function start() {
+  cleanup();
   try {
     const session = await api('session');
     state.people = await api('people');
@@ -416,7 +429,10 @@ function adoptLogged(g, logged) {
   for (const lx of logged.exercises) {
     let ex = g.exercises.find((e) => exKey(e.name) === exKey(lx.name));
     if (!ex) { ex = { name: lx.name, target: '', note: '', sets: [] }; g.exercises.push(ex); }
-    ex.sets = lx.sets.map((s) => ({ weight: s.weight ?? '', reps: s.reps ?? '', seconds: s.seconds ?? '', hint: '', done: true }));
+    const planned = ex.sets;
+    ex.sets = lx.sets.map((s, i) => ({ weight: s.weight ?? '', reps: s.reps ?? '', seconds: s.seconds ?? '', hint: planned[i]?.hint ?? '', done: true }));
+    // Keep the rest of the planned sets so you can carry on where you left off.
+    for (let i = ex.sets.length; i < planned.length; i++) ex.sets.push({ ...planned[i], weight: planned[i].weight || ex.sets[ex.sets.length - 1]?.weight || '' });
   }
   const m = logged.cardio?.match(/(\d+)\s*min/);
   if (m) g.cardio.minutes = m[1];
@@ -444,7 +460,9 @@ async function renderGym(view, alive) {
   for (const w of workouts) if (w.date !== iso) for (const ex of w.exercises) last[exKey(ex.name)] ||= { date: w.date, sets: ex.sets };
   const letters = Object.keys(routine.days).sort();
   const versions = g.choice.kind === 'strength' ? Object.keys(routine.days[g.choice.letter]?.versions || {}) : [];
-  const save = () => { store.set(key, g); scheduleSave(key); };
+  // The saver writes the Notion row id into storage after the first save; never overwrite it.
+  const keepId = () => { const cur = store.get(key); if (cur?.pageId) g.pageId = cur.pageId; };
+  const save = () => { keepId(); store.set(key, g); scheduleSave(key); };
 
   const title = g.choice.kind === 'strength' ? `Strength ${g.choice.letter}` : g.choice.kind === 'cardio' ? (g.session || 'Cardio') : 'Rest day';
   const sub = g.choice.kind === 'strength' ? routine.days[g.choice.letter]?.title.replace(/^Day [A-Z]\s*[—-]\s*/, '') : '';
@@ -513,7 +531,16 @@ async function renderGym(view, alive) {
       const ex = g.exercises[+t.closest('[data-ex]').dataset.ex];
       const s = ex.sets[+t.closest('[data-set]').dataset.set];
       s[t.dataset.f] = t.value.replace(',', '.');
-      if (t.dataset.f !== 'weight') { s.done = !!t.value; t.closest('.set').classList.toggle('done', s.done); }
+      if (t.dataset.f === 'weight') {
+        // Later sets you haven't done yet follow the new weight.
+        const j = +t.closest('[data-set]').dataset.set;
+        const rowsEl = t.closest('.sets').children;
+        for (let k = j + 1; k < ex.sets.length; k++) {
+          if (ex.sets[k].done || ex.sets[k].reps || ex.sets[k].seconds) continue;
+          ex.sets[k].weight = s.weight;
+          rowsEl[k].querySelector('[data-f=weight]').value = s.weight;
+        }
+      } else { s.done = !!t.value; t.closest('.set').classList.toggle('done', s.done); }
       save();
     } else if (t.dataset.cardio) { g.cardio[t.dataset.cardio] = t.value.replace(',', '.'); save(); }
     else if (t.dataset.field) { g[t.dataset.field] = t.value; save(); }
@@ -554,6 +581,7 @@ async function renderGym(view, alive) {
       const fresh = buildGym(routine, choice, v?.dataset.version, workouts, iso);
       // Keep sets already typed for exercises that exist in both plans.
       for (const ex of fresh.exercises) { const old = g.exercises.find((o) => exKey(o.name) === exKey(ex.name)); if (old) ex.sets = old.sets; }
+      keepId();
       Object.assign(fresh, { pageId: g.pageId, cardio: g.cardio, rpe: g.rpe, notes: g.notes, durationMin: g.durationMin });
       g = fresh;
       store.set(key, g);
@@ -570,6 +598,7 @@ async function renderGym(view, alive) {
     input.blur();
     const prev = last[exKey(name)];
     g.exercises.push({ name, target: '', note: '', sets: Array.from({ length: 3 }, (_, i) => ({ weight: prev?.sets[i]?.weight ?? '', reps: '', seconds: '', hint: prev?.sets[i]?.reps ?? '', done: false })) });
+    keepId();
     store.set(key, g);
     renderExercises();
   });

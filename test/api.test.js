@@ -81,3 +81,11 @@ test('meals, targets and auto-save updates', async () => {
   assert.equal(updated.exercisesText, 'Row: 20kg×10, 22kg×8');
   assert.equal((await call(`people/rozhin/workouts/${created.id}`, { method: 'PATCH', body: {} }, cookie)).status, 403);
 });
+
+test('a network failure to Notion gives a clear error, not a crash', async () => {
+  const { createNotionClient } = await import('../src/notion.js');
+  const broken = createNotionClient('t', async () => { throw new TypeError('fetch failed'); });
+  const res = await handleApi(new Request('http://localhost/api/people/amir/workouts'), {}, broken);
+  assert.equal(res.status, 500);
+  assert.match((await res.json()).error, /fetch failed/);
+});

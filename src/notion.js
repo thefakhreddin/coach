@@ -4,7 +4,7 @@ const API = 'https://api.notion.com/v1';
 const VERSION = '2022-06-28';
 
 export function createNotionClient(token, fetchImpl = fetch) {
-  async function call(method, path, body) {
+  async function call(method, path, body, attempt = 0) {
     const res = await fetchImpl(API + path, {
       method,
       headers: {
@@ -14,6 +14,12 @@ export function createNotionClient(token, fetchImpl = fetch) {
       },
       body: body ? JSON.stringify(body) : undefined,
     });
+    // Notion allows ~3 requests/second; back off and retry when it says "slow down".
+    if ((res.status === 429 || res.status >= 500) && attempt < 4) {
+      const wait = Number(res.headers.get('retry-after')) * 1000 || 400 * 2 ** attempt;
+      await new Promise((r) => setTimeout(r, Math.min(wait, 5000)));
+      return call(method, path, body, attempt + 1);
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       const err = new Error(data.message || `Notion API error ${res.status}`);

@@ -15,10 +15,7 @@ export default {
       const client = env.NOTION_TOKEN ? createNotionClient(env.NOTION_TOKEN) : null;
       return handleApi(request, env, client);
     }
-    // Keep the site out of search engines.
-    const res = await env.ASSETS.fetch(request);
-    const out = new Response(res.body, res);
-    out.headers.set('X-Robots-Tag', 'noindex, nofollow');
-    return out;
+    // Static files (search engines are kept out by robots.txt and the page's robots meta tag).
+    return env.ASSETS.fetch(request);
   },
 };
