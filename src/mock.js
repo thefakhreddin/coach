@@ -1,6 +1,6 @@
 // In-memory stand-in for Notion, used by `npm run demo` and the tests.
 // The routine mirrors the real "Current Routine" page structure (Block 1).
-import { PEOPLE } from './config.js';
+import { PEOPLE, SHARED } from './config.js';
 
 let seq = 0;
 const rt = (t, extra = {}) => [{ plain_text: t, text: { content: t }, annotations: extra }];
@@ -43,6 +43,61 @@ function routineBlocks() {
   ];
 }
 
+const A = (t) => t; // readability helper for the meal tables below
+function mealsPage() {
+  const hdr = ['Time', 'Amir', 'Rozhin'];
+  const yog = '3/4 cup Greek yogurt (140 kcal / 20 g)';
+  const rLunchAdd = ' + 2 eggs + 1 slice toast + tomato and cucumber';
+  return [
+    blk('paragraph', 'Same meals for both of you; only the portions differ. Shop and prep on Sunday and Wednesday.'),
+    blk('heading_2', 'Every day'),
+    table([hdr,
+      ['Breakfast, about 8am', '3 eggs + 1 slice toast + 3/4 cup Greek yogurt + tomato and cucumber (460 kcal / 40 g)', 'Fasting until 12:00 (black coffee, tea, or water)'],
+      ['Snack, about 10:30am', yog, 'Fasting until 12:00'],
+      ['Snack, about 15:30 (Rozhin) / 4pm (Amir)', '1/2 cup Greek yogurt + cucumber + 1 apple (190 kcal / 10 g)', '1 cup Greek yogurt + cucumber + 1 apple (290 kcal / 25 g)'],
+      ['Snack, before 20:00', '—', yog]]),
+    blk('heading_2', 'Cycle A (Sun–Tue)'),
+    table([hdr,
+      ['Sun lunch', '1 can tuna + 1/2 cup Greek yogurt + 1 cup cooked rice + big salad + 1 tbsp oil (580 kcal / 45 g)', A('1 can tuna + 1/4 cup Greek yogurt + 3/4 cup cooked rice + big salad + 2 tsp oil' + rLunchAdd + ' (690 kcal / 50 g)')],
+      ['Sun dinner', '140 g cooked lean ground beef (koobideh-style) + 1 cup cooked rice + half plate vegetables + 2 tsp oil (620 kcal / 40 g)', '120 g cooked lean ground beef (koobideh-style) + 3/4 cup cooked rice + half plate vegetables + 2 tsp oil (500 kcal / 30 g)'],
+      ['Mon lunch', '150 g cooked lean ground beef (koobideh-style) + 3/4 cup cooked rice + big salad + 2 tsp oil (560 kcal / 45 g)', '110 g cooked lean ground beef (koobideh-style) + 2/3 cup cooked rice + big salad + 2 tsp oil' + rLunchAdd + ' (710 kcal / 45 g)'],
+      ['Mon dinner', '1.5 cups cooked lentils + 1 egg + 1/4 cup Greek yogurt + salad + 2 tsp oil (570 kcal / 40 g)', '1 cup cooked lentils + 1 egg + 1/4 cup Greek yogurt + salad + 1 tsp oil (420 kcal / 30 g)'],
+      ['Tue lunch', '1.5 cups cooked lentils + 1 egg + 1/4 cup Greek yogurt + salad + 2 tsp oil (570 kcal / 40 g)', '1 cup cooked lentils + 1 egg + 1/4 cup Greek yogurt + salad + 1 tsp oil' + rLunchAdd + ' (670 kcal / 45 g)'],
+      ['Tue dinner', '140 g cooked lean ground beef (koobideh-style) + 1 cup cooked rice + half plate vegetables + 2 tsp oil (620 kcal / 40 g)', '120 g cooked lean ground beef (koobideh-style) + 3/4 cup cooked rice + half plate vegetables + 2 tsp oil (500 kcal / 30 g)']]),
+    blk('heading_2', 'Cycle B (Wed–Sat)'),
+    table([hdr,
+      ['Wed lunch', '130 g cooked chicken + 1 cup cooked rice + big salad + 1 tbsp oil (570 kcal / 45 g)', '100 g cooked chicken + 3/4 cup cooked rice + big salad + 2 tsp oil' + rLunchAdd + ' (680 kcal / 50 g)'],
+      ['Wed dinner', '150 g cooked stew beef + 1 cup cooked rice + half plate vegetables + 1 tbsp oil (630 kcal / 45 g)', '120 g cooked stew beef + 3/4 cup cooked rice + half plate vegetables + 2 tsp oil (480 kcal / 35 g)'],
+      ['Thu lunch', '150 g cooked stew beef + 1 cup cooked rice + big salad + 1 tbsp oil (610 kcal / 45 g)', '110 g cooked stew beef + 2/3 cup cooked rice + big salad + 2 tsp oil' + rLunchAdd + ' (680 kcal / 50 g)'],
+      ['Thu dinner', '120 g cooked chicken + 1 cup cooked rice + half plate vegetables + 1 tbsp oil (570 kcal / 40 g)', '90 g cooked chicken + 3/4 cup cooked rice + half plate vegetables + 2 tsp oil (430 kcal / 30 g)'],
+      ['Fri lunch', '1 can tuna + 1/2 cup Greek yogurt + 1 cup cooked rice + big salad + 1 tbsp oil (580 kcal / 45 g)', '1 can tuna + 1/4 cup Greek yogurt + 3/4 cup cooked rice + big salad + 2 tsp oil' + rLunchAdd + ' (690 kcal / 50 g)'],
+      ['Fri dinner', '120 g cooked chicken + 1 cup cooked rice + half plate vegetables + 1 tbsp oil (570 kcal / 40 g)', '90 g cooked chicken + 3/4 cup cooked rice + half plate vegetables + 2 tsp oil (430 kcal / 30 g)'],
+      ['Sat lunch', '150 g cooked stew beef + 1 cup cooked rice + big salad + 1 tbsp oil (610 kcal / 45 g)', '110 g cooked stew beef + 2/3 cup cooked rice + big salad + 2 tsp oil' + rLunchAdd + ' (680 kcal / 50 g)'],
+      ['Sat dinner', '150 g cooked stew beef (or lamb) + 1 cup cooked rice + half plate vegetables + 1 tbsp oil (630 kcal / 45 g)', '120 g cooked stew beef (or lamb) + 3/4 cup cooked rice + half plate vegetables + 2 tsp oil (480 kcal / 35 g)']]),
+    blk('heading_2', 'Meal prep'),
+    blk('paragraph', 'Cook eggs fresh. Dress salads only when you eat. Cooked beef, chicken, lentils, and rice keep 3–4 days in the fridge.'),
+    table([['Day', 'Step', 'Time'],
+      ['Sunday (Cycle A)', 'Shop for Sun–Tue', 'Before prep'],
+      ['Sunday (Cycle A)', 'Cook koobideh-style lean ground beef', '20–25 min'],
+      ['Sunday (Cycle A)', 'Cook one pot of lentils', '25–30 min'],
+      ['Sunday (Cycle A)', 'Cook one pot of rice and portion it', '20 min'],
+      ['Sunday (Cycle A)', 'Chop salad, cucumber, and vegetables; portion yogurt; wash apples', '15 min'],
+      ['Sunday (Cycle A)', 'Pack lunches and dinners', '10 min'],
+      ['Sunday total', 'Covers Sun–Tue', 'About 60–90 min'],
+      ['Wednesday (Cycle B)', 'Shop for Wed–Sat', 'Before prep'],
+      ['Wednesday (Cycle B)', 'Bake chicken (lemon, garlic, salt, turmeric)', '40–50 min'],
+      ['Wednesday (Cycle B)', 'Cook stew beef (onion, tomato, turmeric)', '15 min + simmer'],
+      ['Wednesday (Cycle B)', 'Cook rice; chop vegetables; portion yogurt; wash apples', '20 min'],
+      ['Wednesday (Cycle B)', 'Pack lunches and dinners', '10 min']]),
+  ];
+}
+
+function profilePage(p) {
+  const amir = p.id === 'amir';
+  return [blk('heading_2', 'Profile & targets'), { ...table([['', ''], ['Age', '27'], ['Height', amir ? '176 cm' : '164 cm'], ['Starting weight', amir ? 'about 89 kg' : '70 kg'],
+    ['Daily energy', amir ? '2,000 kcal' : '1,600 kcal'], ['Protein', amir ? '150 g' : '120 g']]), table: { has_column_header: false } }];
+}
+
 function simplePage(title, lines) {
   return [blk('heading_2', title), ...lines.map((l) => blk('bulleted_list_item', l))];
 }
@@ -52,10 +107,11 @@ export function createMockClient() {
   const dbRows = {};
   for (const p of Object.values(PEOPLE)) {
     pages[p.pages.routine] = routineBlocks();
-    pages[p.pages.overview] = simplePage(`${p.name} — profile (demo data)`, ['Demo mode: connect a Notion token to see the real page.']);
+    pages[p.pages.overview] = profilePage(p);
     pages[p.pages.diet] = simplePage('Diet plan (demo data)', ['Breakfast about 8am', 'Lunch about 12:00', 'Dinner about 19:00']);
     for (const db of Object.values(p.dbs)) dbRows[db] = [];
   }
+  pages[SHARED.meals] = mealsPage();
   seedHistory(dbRows, PEOPLE.amir, 20);
   seedHistory(dbRows, PEOPLE.rozhin, 10);
 
@@ -86,6 +142,12 @@ export function createMockClient() {
     async retrievePage(id) {
       const hit = findPage(id);
       if (!hit) throw Object.assign(new Error('Not found'), { status: 404, code: 'object_not_found' });
+      return hit.row;
+    },
+    async updatePage(id, properties) {
+      const hit = findPage(id);
+      if (!hit) throw Object.assign(new Error('Not found'), { status: 404, code: 'object_not_found' });
+      Object.assign(hit.row.properties, toPage(hit.db, properties).properties);
       return hit.row;
     },
     async archivePage(id) {

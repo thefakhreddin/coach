@@ -1,5 +1,6 @@
 // All /api/* routes. Runtime-agnostic: takes a Web Request, returns a Web Response.
-import { PEOPLE, ROUTINE_BLOCK_OPTIONS } from './config.js';
+import { PEOPLE, SHARED, ROUTINE_BLOCK_OPTIONS } from './config.js';
+import { parseMealsPage, parseTargets } from './meals.js';
 import { fetchBlockTree, simplifyBlocks, parseRoutine, plain } from './notion.js';
 import { formatExercises, parseExercises } from './sets.js';
 import { authEnabled, checkPassword, makeSessionCookie, clearSessionCookie, isAuthenticated } from './auth.js';
@@ -46,6 +47,11 @@ export async function handleApi(request, env, client) {
 
     if (!client) return json({ error: 'NOTION_TOKEN is not set. See README.' }, 500);
 
+    if (parts[0] === 'meals' && method === 'GET') {
+      const doc = await getDoc(client, SHARED.meals, url.searchParams.has('fresh'));
+      return json({ ...parseMealsPage(doc.blocks, Object.values(PEOPLE)), fetchedAt: doc.fetchedAt });
+    }
+
     // ---- /api/people/:person/... ----
     if (parts[0] !== 'people') return json({ error: 'Not found' }, 404);
     const person = PEOPLE[parts[1]];
@@ -64,6 +70,11 @@ export async function handleApi(request, env, client) {
       return json({ ...parseRoutine(doc.blocks), fetchedAt: doc.fetchedAt });
     }
 
+    if (resource === 'profile' && method === 'GET') {
+      const doc = await getDoc(client, person.pages.overview, fresh);
+      return json({ targets: parseTargets(doc.blocks) });
+    }
+
     if (resource === 'workouts' && method === 'GET') {
       const rows = await client.queryDatabase(person.dbs.workouts, { sorts: [{ property: 'Date', direction: 'descending' }] });
       return json(rows.map(workoutFromPage));
@@ -72,6 +83,12 @@ export async function handleApi(request, env, client) {
       const b = await request.json();
       const page = await client.createPage(person.dbs.workouts, workoutProps(person, b));
       return json(workoutFromPage(page), 201);
+    }
+
+    if (resource === 'workouts' && id && method === 'PATCH') {
+      await assertOwned(client, person, id);
+      const page = await client.updatePage(id, workoutProps(person, await request.json()));
+      return json(workoutFromPage(page));
     }
 
     if (resource === 'weighins' && method === 'GET') {
@@ -84,23 +101,33 @@ export async function handleApi(request, env, client) {
       return json(weighinFromPage(page), 201);
     }
 
+    if (resource === 'weighins' && id && method === 'PATCH') {
+      await assertOwned(client, person, id);
+      const page = await client.updatePage(id, weighinProps(person, await request.json()));
+      return json(weighinFromPage(page));
+    }
+
     if (resource === 'entries' && id && method === 'DELETE') {
-      // Only allow removing rows that live in this person's own log databases.
-      const page = await client.retrievePage(id);
-      const owned = Object.values(person.dbs).map(normId);
-      if (!owned.includes(normId(page.parent?.database_id))) return json({ error: 'Not allowed' }, 403);
+      await assertOwned(client, person, id);
       await client.archivePage(id);
       return json({ ok: true });
     }
 
     return json({ error: 'Not found' }, 404);
   } catch (err) {
-    const status = err.status === 404 || err.code === 'object_not_found' ? 502 : err.status || 500;
+    const status = err.code === 'object_not_found' ? 502 : err.status || 500;
     const hint = err.code === 'object_not_found' || err.code === 'unauthorized'
       ? ' Make sure the Notion integration is connected to the "Coach – Fitness & Nutrition" page.'
       : '';
     return json({ error: (err.message || 'Server error') + hint }, status >= 400 ? status : 500);
   }
+}
+
+// Only allow changing rows that live in this person's own log databases.
+async function assertOwned(client, person, pageId) {
+  const page = await client.retrievePage(pageId);
+  const owned = Object.values(person.dbs).map(normId);
+  if (!owned.includes(normId(page.parent?.database_id))) throw Object.assign(new Error('Not allowed'), { status: 403 });
 }
 
 async function getDoc(client, pageId, fresh) {

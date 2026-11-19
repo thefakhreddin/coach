@@ -64,3 +64,19 @@ test('parses a real-shaped Notion table with header', () => {
   const r = parseRoutine(blocks);
   assert.equal(r.days.A.versions.Workout[0].repsHigh, 12);
 });
+
+test('meals, targets and auto-save updates', async () => {
+  const cookie = await login();
+  const meals = await (await call('meals', {}, cookie)).json();
+  assert.equal(meals.people.amir.everyday[0].slot, 'Breakfast');
+  assert.equal(meals.people.rozhin.everyday[0].fasting, true);
+  assert.equal(meals.people.amir.days.Wed.length, 2);
+  assert.ok(meals.prep.some((p) => p.day === 'Sun'));
+  const prof = await (await call('people/rozhin/profile', {}, cookie)).json();
+  assert.deepEqual([prof.targets.kcal, prof.targets.protein], [1600, 120]);
+
+  const created = await (await call('people/amir/workouts', { method: 'POST', body: { date: '2026-11-19', session: 'Strength B', exercises: [{ name: 'Row', sets: [{ weight: 20, reps: 10 }] }] } }, cookie)).json();
+  const updated = await (await call(`people/amir/workouts/${created.id}`, { method: 'PATCH', body: { date: '2026-11-19', session: 'Strength B', exercises: [{ name: 'Row', sets: [{ weight: 20, reps: 10 }, { weight: 22, reps: 8 }] }] } }, cookie)).json();
+  assert.equal(updated.exercisesText, 'Row: 20kg×10, 22kg×8');
+  assert.equal((await call(`people/rozhin/workouts/${created.id}`, { method: 'PATCH', body: {} }, cookie)).status, 403);
+});

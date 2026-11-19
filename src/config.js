@@ -37,4 +37,9 @@ export const PEOPLE = {
   },
 };
 
+// Pages shared by both people.
+export const SHARED = {
+  meals: '41ad0dc263798115ae38d4ae14d49010', // Shared Meals & Prep (both meal plans side by side + prep steps)
+};
+
 export const ROUTINE_BLOCK_OPTIONS = ['Block 1', 'Block 2', 'Block 3', 'Other'];

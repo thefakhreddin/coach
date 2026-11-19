@@ -2,10 +2,15 @@
 
 A small web app for Amir and Rozhin to follow their gym plans and log workouts. **Notion is the database.**
 
-- **Today**: picks today's session from the Current Routine in Notion (Mon = Strength A, …). It lists each exercise with its target, what you lifted last time, and boxes for kg and reps. Tap ✓ to accept the suggested reps. Your entries are saved on the phone as you go, so a refresh at the gym loses nothing. **Save to Notion** adds a row to your Workout Log.
-- **Plan**: your Current Routine, Diet Plan and profile page, read live from Notion. Tap ⟳ to reload them after Coach changes something.
-- **History**: every logged session, with a link to open it in Notion and a Delete button.
-- **Progress**: sessions this week, 7-day average weight, waist, a weigh-in form, a body-weight chart, estimated 1-rep max per exercise, and weekly training volume.
+Pick **Amir** or **Rozhin** at the top. The tabs at the bottom are the same for both of you:
+
+- **Today**: a weigh-in box (just type your weight; it saves itself), today's workout at a glance, today's calories, protein, carbs and fat with a pie chart, and your meals in time order with the next one highlighted.
+- **Gym**: today's workout opens by itself (Mon = Strength A, …), showing each exercise's target and what you lifted last time. Type kg and reps, or tap ✓ to accept the suggested reps. **Everything saves to Notion automatically** a moment after you stop typing. With no signal, it keeps your entries on the phone and syncs when you're back online.
+- **Kitchen**: today or tomorrow. It shows what to cook and portion for both of you (eggs, grams of chicken, cups of rice…), the prep steps on Sunday and Wednesday, a pie chart of your protein sources, and a carbs/protein/fat pie for each meal.
+- **Progress**: weight with a 7-day trend, waist, strength per exercise (heaviest weight, reps, estimated 1-rep max), weekly volume, and recent sessions (with delete).
+- **Week**: the whole week at a glance. Tap a day to see its workout and meals.
+
+Meals come from the **Shared Meals & Prep** page in Notion. Calories and protein are Coach's numbers; carbs and fat are estimated from typical values for each food (`src/meals.js`).
 
 Each workout is written to the existing `Exercises & sets/reps/weights` column as readable text, one exercise per line:
 
@@ -117,6 +122,7 @@ npm test
 |---|---|
 | `src/config.js` | The Notion page and database IDs for each person. Update an ID here if a page is ever recreated. |
 | `src/notion.js` | Notion API client. Turns Notion pages into simple blocks and parses the routine tables (Day A/B/C, the 30-minute and 45–60-minute versions, the weekly schedule). |
+| `src/meals.js` | Reads the meal tables and prep steps from Shared Meals & Prep, and estimates carbs and fat. |
 | `src/sets.js` | Reads and writes the `20kg×10` sets text. |
 | `src/api.js` | The `/api/*` routes: plans, workouts, weigh-ins and login. |
 | `worker.js` | Cloudflare entry point. |

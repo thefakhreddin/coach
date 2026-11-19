@@ -56,6 +56,9 @@ export function createNotionClient(token, fetchImpl = fetch) {
     retrievePage(pageId) {
       return call('GET', `/pages/${pageId}`);
     },
+    updatePage(pageId, properties) {
+      return call('PATCH', `/pages/${pageId}`, { properties });
+    },
     archivePage(pageId) {
       return call('PATCH', `/pages/${pageId}`, { archived: true });
     },

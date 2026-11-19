@@ -1,6 +1,6 @@
 // Lets the app open with no signal (e.g. a basement gym). Network first, cached copy as fallback.
 // API calls are never cached: Notion stays the source of truth.
-const CACHE = 'coach-shell-v1';
+const CACHE = 'coach-shell-v2';
 const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/charts.js', '/manifest.webmanifest', '/apple-touch-icon.png', '/icon-192.png'];
 
 self.addEventListener('install', (e) => {

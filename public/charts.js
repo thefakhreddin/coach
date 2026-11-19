@@ -31,7 +31,8 @@ function makeTip(container) {
 }
 
 // points: [{ x: Date, y: number, tip: string }]
-export function lineChart(container, points, { unit = '', height = 200, zeroBased = false } = {}) {
+// opts.trend: optional second series drawn as the line; `points` then show as soft dots.
+export function lineChart(container, points, { unit = '', height = 200, zeroBased = false, trend = null } = {}) {
   container.innerHTML = '';
   container.classList.add('chart');
   if (!points.length) { container.innerHTML = '<div class="empty">No data yet</div>'; return; }
@@ -39,7 +40,7 @@ export function lineChart(container, points, { unit = '', height = 200, zeroBase
   const H = height;
   const m = { t: 12, r: 14, b: 26, l: 40 };
   const xs = points.map((p) => +p.x);
-  const ys = points.map((p) => p.y);
+  const ys = [...points, ...(trend || [])].map((p) => p.y);
   let x0 = Math.min(...xs), x1 = Math.max(...xs);
   if (x0 === x1) { x0 -= 86400000 * 3; x1 += 86400000 * 3; }
   const ticks = niceTicks(zeroBased ? 0 : Math.min(...ys), Math.max(...ys));
@@ -59,8 +60,13 @@ export function lineChart(container, points, { unit = '', height = 200, zeroBase
     const v = x0 + ((x1 - x0) * i) / Math.max(1, nX - 1);
     el('text', { x: sx(v), y: H - 6, 'text-anchor': i === 0 ? 'start' : i === nX - 1 ? 'end' : 'middle' }, xa).textContent = fmtDate(new Date(v));
   }
-  el('path', { class: 'line', d: points.map((p, i) => `${i ? 'L' : 'M'}${sx(+p.x)},${sy(p.y)}`).join('') }, svg);
-  if (points.length <= 40) for (const p of points) el('circle', { class: 'dot', cx: sx(+p.x), cy: sy(p.y), r: 4 }, svg);
+  if (trend?.length) {
+    for (const p of points) el('circle', { class: 'dot soft', cx: sx(+p.x), cy: sy(p.y), r: 4 }, svg);
+    el('path', { class: 'trend', d: trend.map((p, i) => `${i ? 'L' : 'M'}${sx(+p.x)},${sy(p.y)}`).join('') }, svg);
+  } else {
+    el('path', { class: 'line', d: points.map((p, i) => `${i ? 'L' : 'M'}${sx(+p.x)},${sy(p.y)}`).join('') }, svg);
+    if (points.length <= 40) for (const p of points) el('circle', { class: 'dot', cx: sx(+p.x), cy: sy(p.y), r: 4 }, svg);
+  }
 
   const cross = el('line', { class: 'cross', y1: m.t, y2: H - m.b, visibility: 'hidden' }, svg);
   const focus = el('circle', { class: 'dot', r: 6, visibility: 'hidden' }, svg);
@@ -130,4 +136,53 @@ export function barChart(container, bars, { height = 180 } = {}) {
     hit.addEventListener('pointerleave', () => { tip.hidden = true; });
   });
   el('line', { class: 'baseline', x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b }, svg);
+}
+
+// slices: [{ label, value, color, display }]. Renders a donut with optional centre text and a legend.
+export function donutChart(container, slices, { size = 120, center = '', centerSub = '', legend = true, thickness = 0.17 } = {}) {
+  container.innerHTML = '';
+  container.classList.add('donut', 'chart');
+  const data = slices.filter((s) => s.value > 0);
+  const total = data.reduce((a, s) => a + s.value, 0);
+  const S = 100, R = 48, r = R * (1 - thickness * 2);
+  const svg = el('svg', { viewBox: `0 0 ${S} ${S}`, width: size, height: size, role: 'img',
+    'aria-label': data.map((d) => `${d.label} ${Math.round((d.value / total) * 100)}%`).join(', ') }, container);
+  svg.style.maxWidth = `${size}px`;
+  svg.style.margin = '0 auto';
+  const tip = makeTip(container);
+  if (!total) {
+    el('circle', { cx: 50, cy: 50, r: (R + r) / 2, fill: 'none', stroke: 'var(--fill)', 'stroke-width': R - r }, svg);
+  }
+  let a0 = -Math.PI / 2;
+  const pt = (rad, a) => `${50 + rad * Math.cos(a)},${50 + rad * Math.sin(a)}`;
+  for (const d of data) {
+    const frac = d.value / total;
+    const a1 = a0 + frac * Math.PI * 2;
+    const large = a1 - a0 > Math.PI ? 1 : 0;
+    const path = frac >= 0.999
+      ? `M${pt(R, 0)}A${R},${R} 0 1 1 ${pt(R, Math.PI)}A${R},${R} 0 1 1 ${pt(R, 0)}M${pt(r, 0)}A${r},${r} 0 1 0 ${pt(r, Math.PI)}A${r},${r} 0 1 0 ${pt(r, 0)}Z`
+      : `M${pt(R, a0)}A${R},${R} 0 ${large} 1 ${pt(R, a1)}L${pt(r, a1)}A${r},${r} 0 ${large} 0 ${pt(r, a0)}Z`;
+    const seg = el('path', { d: path, fill: d.color, stroke: 'var(--surface)', 'stroke-width': 1.2, 'fill-rule': 'evenodd' }, svg);
+    const mid = (a0 + a1) / 2;
+    const show = () => {
+      const rect = svg.getBoundingClientRect();
+      const box = container.getBoundingClientRect();
+      tip.hidden = false;
+      tip.textContent = `${d.label}: ${d.display ?? d.value} (${Math.round(frac * 100)}%)`;
+      tip.style.left = `${rect.left - box.left + ((50 + R * 0.8 * Math.cos(mid)) / S) * rect.width}px`;
+      tip.style.top = `${rect.top - box.top + ((50 + R * 0.8 * Math.sin(mid)) / S) * rect.height}px`;
+    };
+    seg.addEventListener('pointerenter', show);
+    seg.addEventListener('pointerdown', show);
+    seg.addEventListener('pointerleave', () => { tip.hidden = true; });
+    a0 = a1;
+  }
+  if (center) el('text', { x: 50, y: centerSub ? 50 : 56, 'text-anchor': 'middle', class: 'center-big' }, svg).textContent = center;
+  if (centerSub) el('text', { x: 50, y: 63, 'text-anchor': 'middle', class: 'center-small' }, svg).textContent = centerSub;
+  if (legend && data.length) {
+    const lg = document.createElement('div');
+    lg.className = 'legend';
+    lg.innerHTML = data.map((d) => `<div class="item"><span class="swatch" style="background:${d.color}"></span><span>${d.label}</span><span>${d.display ?? d.value} · ${Math.round((d.value / total) * 100)}%</span></div>`).join('');
+    container.appendChild(lg);
+  }
 }
