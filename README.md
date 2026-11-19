@@ -49,23 +49,11 @@ npx wrangler login
 
 This opens the browser. Create a free Cloudflare account if you don't have one, then click **Allow**.
 
-Next, set three secrets. Each command asks you to paste a value:
+Next, add your Notion key. In Git Bash, put the value straight into the command, because Git Bash can't answer wrangler's prompts:
 
 ```bash
-npx wrangler secret put NOTION_TOKEN
+echo "PASTE_NOTION_KEY" | npx wrangler secret put NOTION_TOKEN
 ```
-
-```bash
-npx wrangler secret put APP_PASSWORD
-```
-
-```bash
-npx wrangler secret put SESSION_SECRET
-```
-
-- `NOTION_TOKEN`: the `ntn_…` secret from step 1
-- `APP_PASSWORD`: the password you and Rozhin will type to open the app (make it a long one)
-- `SESSION_SECRET`: any long random text
 
 ```bash
 npm run deploy
@@ -78,10 +66,10 @@ To update after code changes, run `git pull` and then `npm run deploy` again.
 
 1. Open your app URL in **Safari**. It has to be Safari: other browsers on iPhone can't install web apps the same way.
 2. Tap **Share** (the square with the arrow), then **Add to Home Screen**, then **Add**.
-3. Open **Coach** from the home screen and sign in.
+3. Open **Coach** from the home screen.
 
 It then opens full-screen like a normal app, with its own icon, light and dark mode, and room for the notch and home bar. It still opens with no signal, and a workout you haven't saved stays on the phone until you tap **Save to Notion**.
-The home-screen app keeps its own login, separate from Safari, so you sign in once inside it. Rozhin does the same on her phone.
+Rozhin does the same on her phone.
 
 ## 2b. Or run it on your own computer
 
@@ -89,7 +77,7 @@ The home-screen app keeps its own login, separate from Safari, so you sign in on
 cp .env.example .env
 ```
 
-Edit `.env` and fill in `NOTION_TOKEN`, `APP_PASSWORD` and `SESSION_SECRET`, then start it:
+Edit `.env` and fill in `NOTION_TOKEN`, then start it:
 
 ```bash
 npm start
@@ -123,4 +111,6 @@ npm test
 | `server.js` | Local Node server (`npm start`). |
 | `public/` | The phone-friendly front end. Plain HTML, CSS and JS, no build step. |
 
-**Privacy:** the Notion key stays on the server and never reaches the browser. Every API call needs the password cookie, and you sign in once per phone (it lasts about a year). The online version refuses to start without `APP_PASSWORD` unless you set `NO_PASSWORD = "yes"` in `wrangler.toml`. That isn't recommended: anyone with the URL could then read your logs and add or delete rows in your Notion.
+**Privacy:** the Notion key stays on the server and never reaches the browser. The site asks search engines not to list it.
+There is **no password**, so anyone who has the URL can open the app, and that includes adding or deleting log rows. Don't share the link.
+To add a password later, set the `APP_PASSWORD` and `SESSION_SECRET` secrets; sign-in then turns on automatically.
