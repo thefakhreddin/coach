@@ -123,4 +123,4 @@ npm test
 | `server.js` | Local Node server (`npm start`). |
 | `public/` | The phone-friendly front end. Plain HTML, CSS and JS, no build step. |
 
-**Privacy:** the Notion key stays on the server and never reaches the browser. Every API call needs the password cookie, and the online version refuses to start without `APP_PASSWORD`.
+**Privacy:** the Notion key stays on the server and never reaches the browser. Every API call needs the password cookie, and you sign in once per phone (it lasts about a year). The online version refuses to start without `APP_PASSWORD` unless you set `NO_PASSWORD = "yes"` in `wrangler.toml`. That isn't recommended: anyone with the URL could then read your logs and add or delete rows in your Notion.

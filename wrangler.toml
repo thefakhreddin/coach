@@ -12,3 +12,8 @@ run_worker_first = ["/api/*"]
 #   NOTION_TOKEN    - Notion internal integration secret
 #   APP_PASSWORD    - the password you and Rozhin type to open the app
 #   SESSION_SECRET  - any long random string
+
+[vars]
+# Change to "yes" to open the app without a password. Anyone with the URL could then
+# read your logs and add or delete rows in your Notion. Leave as "no" to require APP_PASSWORD.
+NO_PASSWORD = "no"

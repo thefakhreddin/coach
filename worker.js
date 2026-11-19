@@ -6,8 +6,9 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname.startsWith('/api/')) {
-      if (!env.APP_PASSWORD) {
-        return new Response(JSON.stringify({ error: 'APP_PASSWORD secret is not set; refusing to run unprotected online.' }), {
+      // Online, a password is required unless you explicitly opt out with NO_PASSWORD = "yes".
+      if (!env.APP_PASSWORD && env.NO_PASSWORD !== 'yes') {
+        return new Response(JSON.stringify({ error: 'Set the APP_PASSWORD secret, or set NO_PASSWORD = "yes" in wrangler.toml to run without one.' }), {
           status: 500, headers: { 'Content-Type': 'application/json' },
         });
       }

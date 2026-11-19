@@ -1,7 +1,7 @@
 // Password login with a signed, HttpOnly session cookie (Web Crypto: works in Node 20+ and Workers).
 
 const COOKIE = 'coach_session';
-const MAX_AGE = 60 * 60 * 24 * 90; // 90 days
+const MAX_AGE = 60 * 60 * 24 * 400; // ~13 months, the longest browsers keep a cookie
 const enc = new TextEncoder();
 
 async function hmac(secret, message) {
