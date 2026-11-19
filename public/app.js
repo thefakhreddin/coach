@@ -328,7 +328,7 @@ async function renderToday(view, alive) {
       <div class="muted small" style="margin:-.4rem 0 .4rem">${esc(day.title.replace(/^Day [A-Z]\s*[—-]\s*/, ''))}</div>
       <div class="list">${list.map((ex) => `<div class="list-row"><span>${esc(ex.name)}</span><span class="right">${esc(ex.target)}</span></div>`).join('')}</div>`;
   } else if (plan.kind === 'cardio') {
-    workoutHtml = `<div class="card-title"><h2>🚶 ${esc(plan.label)}</h2></div><p class="muted" style="margin:0">Treadmill at a 4–8% incline, brisk but you can still talk. 30–60 min.</p>`;
+    workoutHtml = `<div class="card-title"><h2>🚶 ${esc(plan.label)}</h2></div>${cardioPlanHtml(routine)}`;
   } else {
     workoutHtml = `<div class="card-title"><h2>😌 ${esc(plan.label || 'Rest')}</h2></div><p class="muted" style="margin:0">No gym today. An easy walk is a bonus.</p>`;
   }
@@ -379,6 +379,11 @@ async function renderToday(view, alive) {
   $('#w-waist').addEventListener('input', onWeigh);
   for (const id of ['#w-kg', '#w-waist']) $(id).addEventListener('blur', () => flush(wkey));
   $('#go-gym')?.addEventListener('click', () => go('gym'));
+}
+
+function cardioPlanHtml(routine) {
+  const lines = routine.cardio?.length ? routine.cardio : ['Treadmill at a 4–8% incline, brisk but you can still talk. 30–60 min.'];
+  return `<div class="list">${lines.map((l) => `<div class="list-row" style="grid-template-columns:1fr"><span style="font-size:15px">${esc(l)}</span></div>`).join('')}</div>`;
 }
 
 // ================= GYM =================
@@ -441,11 +446,11 @@ async function renderGym(view, alive) {
   const versions = g.choice.kind === 'strength' ? Object.keys(routine.days[g.choice.letter]?.versions || {}) : [];
   const save = () => { store.set(key, g); scheduleSave(key); };
 
-  const title = g.choice.kind === 'strength' ? `Strength ${g.choice.letter}` : g.choice.kind === 'cardio' ? 'Cardio' : 'Rest day';
+  const title = g.choice.kind === 'strength' ? `Strength ${g.choice.letter}` : g.choice.kind === 'cardio' ? (g.session || 'Cardio') : 'Rest day';
   const sub = g.choice.kind === 'strength' ? routine.days[g.choice.letter]?.title.replace(/^Day [A-Z]\s*[—-]\s*/, '') : '';
   const cardioCard = (open) => `<div class="card">
-      <div class="card-title"><h2>🚶 Cardio</h2></div>
-      ${open ? '' : '<p class="muted small" style="margin:-.3rem 0 .6rem">Optional on strength days.</p>'}
+      <div class="card-title"><h2>${open ? "🚶 Coach's plan" : '🚶 Cardio'}</h2></div>
+      ${open ? `<div style="margin:-.3rem 0 .8rem">${cardioPlanHtml(routine)}</div>` : '<p class="muted small" style="margin:-.3rem 0 .6rem">Optional on strength days.</p>'}
       <div class="cardio-grid">
         <div><label>Minutes</label><input data-cardio="minutes" inputmode="numeric" value="${esc(g.cardio.minutes)}" placeholder="30"></div>
         <div><label>Incline %</label><input data-cardio="incline" inputmode="decimal" value="${esc(g.cardio.incline)}" placeholder="6"></div>

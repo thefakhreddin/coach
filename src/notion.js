@@ -150,7 +150,7 @@ export function parseTarget(text) {
 //  - weekly schedule (Mon -> Strength A ...)
 //  - strength days: { A: { title, versions: { "30 minutes": [exercises], ... } } }
 export function parseRoutine(blocks) {
-  const result = { block: null, schedule: [], days: {} };
+  const result = { block: null, schedule: [], days: {}, cardio: [] };
   let h2 = '';
   let h3 = '';
 
@@ -161,6 +161,9 @@ export function parseRoutine(blocks) {
         const m = text.match(/\bBlock\s+(\d+)/i);
         if (m) result.block = `Block ${m[1]}`;
       }
+      // Coach's cardio guidance: short paragraphs/bullets under a "Cardio ..." heading.
+      if (/cardio|walk/i.test(h2) && !/^Day\s/i.test(h2) && ['paragraph', 'bulleted_list_item', 'numbered_list_item'].includes(b.type)
+        && text && !text.startsWith('|') && !text.startsWith('\\|') && result.cardio.length < 4) result.cardio.push(text);
       if (b.type === 'heading_1' || b.type === 'heading_2') { h2 = text; h3 = ''; }
       else if (b.type === 'heading_3') h3 = text;
       else if (b.type === 'table' && b.rows?.length) {

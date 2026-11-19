@@ -33,6 +33,7 @@ test('parses the routine into days and schedule', async () => {
   assert.equal(full[0].name, 'Goblet squat');
   assert.equal(full[0].sets, 3);
   assert.equal(full.find((e) => e.name === 'Plank').timed, true);
+  assert.equal(r.cardio.length, 2); // table-ish text skipped
 });
 
 test('logs a workout and reads it back parsed', async () => {

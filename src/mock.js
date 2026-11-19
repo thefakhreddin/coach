@@ -39,7 +39,9 @@ function routineBlocks() {
     table([['Exercise', 'Sets × reps', 'Note'], ['Dumbbell split squat', '3 × 8–10 / leg', ''], ['Cable or dumbbell row', '3 × 8–12', ''],
       ['Dumbbell shoulder press', '3 × 8–12', ''], ['Glute bridge or hip thrust', '3 × 10–15', ''], ['Pallof press or cable chop', '3 × 8–12 / side', '']]),
     blk('heading_2', 'Cardio and incline walks'),
-    blk('paragraph', 'Incline walking on the treadmill is the default. Start at a 4–8% incline.'),
+    blk('paragraph', 'Incline walking on the treadmill is the default. Keep a pace where you can still talk in short sentences. Start at a 4–8% incline.'),
+    blk('paragraph', 'If it feels easy after a week, raise the incline before you raise the speed. A bike or elliptical is a fine swap.'),
+    blk('paragraph', '| Version | How to spend it |'),
   ];
 }
 
