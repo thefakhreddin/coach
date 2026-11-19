@@ -49,18 +49,18 @@ npx wrangler login
 
 This opens the browser. Create a free Cloudflare account if you don't have one, then click **Allow**.
 
-Next, set three secrets. Each command asks you to paste a value:
+Next, set three secrets. In Git Bash, put the value straight into the command, because Git Bash can't answer wrangler's prompts:
 
 ```bash
-npx wrangler secret put NOTION_TOKEN
+echo "PASTE_NOTION_KEY" | npx wrangler secret put NOTION_TOKEN
 ```
 
 ```bash
-npx wrangler secret put APP_PASSWORD
+echo "YOUR_APP_PASSWORD" | npx wrangler secret put APP_PASSWORD
 ```
 
 ```bash
-npx wrangler secret put SESSION_SECRET
+echo "any-long-random-text" | npx wrangler secret put SESSION_SECRET
 ```
 
 - `NOTION_TOKEN`: the `ntn_…` secret from step 1
