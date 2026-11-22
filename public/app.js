@@ -13,7 +13,7 @@ const dayOf = (iso) => DAYS[parseDate(iso).getDay()];
 const fmtDate = (s) => parseDate(s).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 const fmtLong = (s) => parseDate(s).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
 const exKey = (n) => String(n).toLowerCase().replace(/\(.*?\)/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
-const fmtSet = (s) => (s.seconds && !s.reps ? `${s.seconds}s` : `${s.weight ? `${s.weight}kg` : 'BW'}×${s.reps}`);
+const fmtSet = (s) => (s.seconds && !s.reps ? (s.seconds >= 60 && s.seconds % 60 === 0 ? `${s.seconds / 60}min` : `${s.seconds}s`) : `${s.weight ? `${s.weight}kg` : 'BW'}×${s.reps}`);
 const e1rm = (s) => (s.weight && s.reps ? s.weight * (1 + Math.min(s.reps, 15) / 30) : 0);
 const r1 = (n) => Math.round(n * 10) / 10;
 const num = (v) => (v === '' || v == null || !Number.isFinite(Number(v)) ? null : Number(v));
@@ -108,6 +108,17 @@ function defaultVersion(routine, letter) {
   if (saved && vs.includes(saved)) return saved;
   return vs.find((v) => /45|60/.test(v)) || vs[vs.length - 1] || null;
 }
+// Week number inside the current block (1-based), from the block's start date in Notion.
+function blockWeek(routine) {
+  if (!routine.blockStart) return 1;
+  const days = Math.floor((parseDate(todayISO()) - parseDate(routine.blockStart)) / 86400000);
+  return days < 0 ? 1 : Math.floor(days / 7) + 1;
+}
+// Pick the column that applies this week ("Wk 1–2" vs "Wk 3+").
+function targetFor(ex, week) {
+  const ts = ex.targets?.length ? ex.targets : [ex];
+  return ts.filter((t) => (t.from || 1) <= week).slice(-1)[0] || ts[0];
+}
 function weekStart(d = new Date()) {
   const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
@@ -189,7 +200,8 @@ const gymSpec = {
   body: (g) => {
     const exercises = g.exercises.map((ex) => ({
       name: ex.name,
-      sets: ex.sets.filter((s) => num(s.reps) > 0 || num(s.seconds) > 0).map((s) => ({ weight: num(s.weight), reps: num(s.reps), seconds: num(s.seconds) })),
+      sets: ex.sets.filter((s) => num(s.reps) > 0 || num(s.seconds) > 0)
+        .map((s) => ({ weight: num(s.weight), reps: num(s.reps), seconds: num(s.seconds) == null ? null : num(s.seconds) * (ex.timed === 'min' ? 60 : 1) })),
     })).filter((ex) => ex.sets.length);
     const c = g.cardio || {};
     const cardio = num(c.minutes) ? [g.choice.kind === 'cardio' ? (g.choice.label || 'Cardio') : 'Cardio', `${c.minutes} min`, num(c.incline) != null ? `${c.incline}% incline` : '', num(c.speed) != null ? `${c.speed} km/h` : ''].filter(Boolean).join(', ') : '';
@@ -339,7 +351,7 @@ async function renderToday(view, alive) {
     const list = day.versions[version] || [];
     workoutHtml = `<div class="card-title"><h2>🏋️ ${esc(plan.label)}</h2><span class="status">${esc(version || '')}</span></div>
       <div class="muted small" style="margin:-.4rem 0 .4rem">${esc(day.title.replace(/^Day [A-Z]\s*[—-]\s*/, ''))}</div>
-      <div class="list">${list.map((ex) => `<div class="list-row"><span>${esc(ex.name)}</span><span class="right">${esc(ex.target)}</span></div>`).join('')}</div>`;
+      <div class="list">${list.map((ex) => `<div class="list-row"><span>${esc(ex.name)}${ex.recommended ? `<div class="sub">Coach: ${esc(ex.recommended)}</div>` : ''}</span><span class="right">${esc(targetFor(ex, blockWeek(routine)).target)}</span></div>`).join('')}</div>`;
   } else if (plan.kind === 'cardio') {
     workoutHtml = `<div class="card-title"><h2>🚶 ${esc(plan.label)}</h2></div>${cardioPlanHtml(routine)}`;
   } else {
@@ -410,11 +422,24 @@ function buildGym(routine, choice, version, workouts, iso) {
   if (choice.kind === 'strength') {
     g.session = `Strength ${choice.letter}`;
     g.version = version || defaultVersion(routine, choice.letter);
+    const week = blockWeek(routine);
     for (const ex of routine.days[choice.letter]?.versions[g.version] || []) {
+      const t = targetFor(ex, week);
       const prev = last[exKey(ex.name)];
+      const rec = ex.rec || [];
+      const n = t.sets || rec.length || 3;
       g.exercises.push({
-        name: ex.name, target: ex.target, note: ex.note, timed: ex.timed,
-        sets: Array.from({ length: ex.sets || 3 }, (_, i) => ({ weight: prev?.[Math.min(i, prev.length - 1)]?.weight ?? '', reps: '', seconds: '', hint: ex.repsLow ?? '', done: false })),
+        name: ex.name, target: t.target, note: ex.note, timed: t.timed, recommended: ex.recommended || '',
+        sets: Array.from({ length: n }, (_, i) => {
+          const r = rec.length ? rec[Math.min(i, rec.length - 1)] : null;
+          const p = prev?.[Math.min(i, prev.length - 1)];
+          // Grey placeholders: Coach's recommendation first, then last time, then the plan's range.
+          const hintW = r?.weight ?? p?.weight ?? '';
+          let hint = r ? (t.timed ? r.seconds : r.reps) : null;
+          if (hint != null && t.timed === 'min') hint = hint / 60;
+          if (hint == null) hint = t.repsLow ?? '';
+          return { weight: '', reps: '', seconds: '', hint, hintW, done: false };
+        }),
       });
     }
   } else if (choice.kind === 'cardio') {
@@ -430,9 +455,10 @@ function adoptLogged(g, logged) {
     let ex = g.exercises.find((e) => exKey(e.name) === exKey(lx.name));
     if (!ex) { ex = { name: lx.name, target: '', note: '', sets: [] }; g.exercises.push(ex); }
     const planned = ex.sets;
-    ex.sets = lx.sets.map((s, i) => ({ weight: s.weight ?? '', reps: s.reps ?? '', seconds: s.seconds ?? '', hint: planned[i]?.hint ?? '', done: true }));
+    ex.sets = lx.sets.map((s, i) => ({ weight: s.weight ?? '', reps: s.reps ?? '', seconds: s.seconds != null ? (ex.timed === 'min' ? s.seconds / 60 : s.seconds) : '',
+      hint: planned[i]?.hint ?? '', hintW: planned[i]?.hintW ?? '', done: true }));
     // Keep the rest of the planned sets so you can carry on where you left off.
-    for (let i = ex.sets.length; i < planned.length; i++) ex.sets.push({ ...planned[i], weight: planned[i].weight || ex.sets[ex.sets.length - 1]?.weight || '' });
+    for (let i = ex.sets.length; i < planned.length; i++) ex.sets.push({ ...planned[i], hintW: ex.sets[ex.sets.length - 1]?.weight || planned[i].hintW || '' });
   }
   const m = logged.cardio?.match(/(\d+)\s*min/);
   if (m) g.cardio.minutes = m[1];
@@ -510,11 +536,12 @@ async function renderGym(view, alive) {
       return `<div class="card exercise" data-ex="${i}">
         <div class="row spread"><h3>${esc(ex.name)}</h3><button class="icon-btn" data-remove-ex="${i}" aria-label="Remove ${esc(ex.name)}">✕</button></div>
         <div class="meta">${esc([ex.target, ex.note].filter(Boolean).join(' · '))}</div>
+        ${ex.recommended ? `<div class="rec">🎯 Coach recommends: <b>${esc(ex.recommended)}</b></div>` : ''}
         ${prev ? `<div class="last">Last time: ${esc(prev.sets.map(fmtSet).join(', '))}</div>` : ''}
-        <div class="sets-head"><span>#</span><span>kg</span><span>${ex.timed ? 'sec' : 'reps'}</span><span></span></div>
+        <div class="sets-head"><span>#</span><span>kg</span><span>${ex.timed === 'min' ? 'min' : ex.timed ? 'sec' : 'reps'}</span><span></span></div>
         <div class="sets">${ex.sets.map((s, j) => `<div class="set${s.done ? ' done' : ''}" data-set="${j}">
             <span class="n">${j + 1}</span>
-            <input inputmode="decimal" data-f="weight" placeholder="BW" value="${esc(s.weight)}" aria-label="Weight kg, set ${j + 1}">
+            <input inputmode="decimal" data-f="weight" placeholder="${esc(s.hintW !== '' && s.hintW != null ? s.hintW : 'BW')}" value="${esc(s.weight)}" aria-label="Weight kg, set ${j + 1}">
             <input inputmode="numeric" data-f="${ex.timed ? 'seconds' : 'reps'}" placeholder="${esc(s.hint ?? '')}" value="${esc(ex.timed ? s.seconds : s.reps)}" aria-label="${ex.timed ? 'Seconds' : 'Reps'}, set ${j + 1}">
             <button class="check" data-check aria-label="Set ${j + 1} done">✓</button>
           </div>`).join('')}</div>
@@ -536,11 +563,19 @@ async function renderGym(view, alive) {
         const j = +t.closest('[data-set]').dataset.set;
         const rowsEl = t.closest('.sets').children;
         for (let k = j + 1; k < ex.sets.length; k++) {
-          if (ex.sets[k].done || ex.sets[k].reps || ex.sets[k].seconds) continue;
-          ex.sets[k].weight = s.weight;
-          rowsEl[k].querySelector('[data-f=weight]').value = s.weight;
+          if (ex.sets[k].done || ex.sets[k].reps || ex.sets[k].seconds || ex.sets[k].weight !== '') continue;
+          ex.sets[k].hintW = s.weight;
+          rowsEl[k].querySelector('[data-f=weight]').placeholder = s.weight || 'BW';
         }
-      } else { s.done = !!t.value; t.closest('.set').classList.toggle('done', s.done); }
+      } else {
+        s.done = !!t.value;
+        // Typing reps without a weight means you used the suggested weight: fill it in visibly.
+        if (s.done && s.weight === '' && s.hintW !== '' && s.hintW != null) {
+          s.weight = String(s.hintW);
+          t.closest('.set').querySelector('[data-f=weight]').value = s.weight;
+        }
+        t.closest('.set').classList.toggle('done', s.done);
+      }
       save();
     } else if (t.dataset.cardio) { g.cardio[t.dataset.cardio] = t.value.replace(',', '.'); save(); }
     else if (t.dataset.field) { g[t.dataset.field] = t.value; save(); }
@@ -557,12 +592,14 @@ async function renderGym(view, alive) {
         const s = ex.sets[j];
         const field = ex.timed ? 'seconds' : 'reps';
         s.done = !s.done;
-        if (s.done && !s[field] && s.hint !== '') s[field] = String(s.hint);
-        if (!s.done) s[field] = '';
-        if (s.done && j + 1 < ex.sets.length && ex.sets[j + 1].weight === '' && s.weight !== '') ex.sets[j + 1].weight = s.weight;
+        if (s.done && !s[field] && s.hint !== '' && s.hint != null) s[field] = String(s.hint);
+        if (s.done && s.weight === '' && s.hintW !== '' && s.hintW != null) s.weight = String(s.hintW);
+        if (!s.done) { s[field] = ''; s.weight = ''; }
+        // Carry a changed weight to the next set's suggestion.
+        if (s.done && j + 1 < ex.sets.length && ex.sets[j + 1].weight === '' && s.weight !== '') ex.sets[j + 1].hintW = s.weight;
       } else if (e.target.closest('[data-add-set]')) {
         const p = ex.sets[ex.sets.length - 1] || {};
-        ex.sets.push({ weight: p.weight ?? '', reps: '', seconds: '', hint: p.hint ?? '', done: false });
+        ex.sets.push({ weight: '', reps: '', seconds: '', hint: p.hint ?? '', hintW: p.weight || p.hintW || '', done: false });
       } else if (e.target.closest('[data-remove-ex]')) {
         if (!confirm(`Remove ${ex.name} from today?`)) return;
         g.exercises.splice(i, 1);
@@ -597,7 +634,7 @@ async function renderGym(view, alive) {
     input.value = '';
     input.blur();
     const prev = last[exKey(name)];
-    g.exercises.push({ name, target: '', note: '', sets: Array.from({ length: 3 }, (_, i) => ({ weight: prev?.sets[i]?.weight ?? '', reps: '', seconds: '', hint: prev?.sets[i]?.reps ?? '', done: false })) });
+    g.exercises.push({ name, target: '', note: '', sets: Array.from({ length: 3 }, (_, i) => ({ weight: '', reps: '', seconds: '', hintW: prev?.sets[i]?.weight ?? '', hint: prev?.sets[i]?.reps ?? '', done: false })) });
     keepId();
     store.set(key, g);
     renderExercises();
@@ -825,7 +862,7 @@ async function renderWeek(view, alive) {
           <div><div class="dsub">${icon} ${esc(plan.label || 'Rest')}${iso === today ? '<span class="pill">Today</span>' : ''}</div><div class="dsub2">${esc(main)}${t.kcal ? ` · ${Math.round(t.kcal)} kcal` : ''}</div></div>
           <span class="chev">›</span></summary>
         <div class="body">
-          ${exs.length ? `<div class="list">${exs.map((ex) => `<div class="list-row"><span>${esc(ex.name)}</span><span class="right">${esc(ex.target)}</span></div>`).join('')}</div>` : ''}
+          ${exs.length ? `<div class="list">${exs.map((ex) => `<div class="list-row"><span>${esc(ex.name)}${ex.recommended ? `<div class="sub">Coach: ${esc(ex.recommended)}</div>` : ''}</span><span class="right">${esc(targetFor(ex, blockWeek(routine)).target)}</span></div>`).join('')}</div>` : ''}
           <div class="list" style="margin-top:${exs.length ? '.6rem' : '0'}">${meals.map((m) => `<div class="list-row"><div>${esc(m.slot)} <span class="muted small">${esc(m.time)}</span><div class="sub">${m.fasting ? 'Fasting' : esc(m.items.map(itemText).join(', '))}</div></div><span class="right">${m.fasting ? '' : `${m.kcal} kcal`}</span></div>`).join('')}</div>
         </div></details>`;
     }).join('')}`;

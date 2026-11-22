@@ -32,8 +32,15 @@ test('parses the routine into days and schedule', async () => {
   const full = r.days.A.versions['45–60 minutes'];
   assert.equal(full[0].name, 'Goblet squat');
   assert.equal(full[0].sets, 3);
-  assert.equal(full.find((e) => e.name === 'Plank').timed, true);
+  assert.equal(full.length, 8);
+  assert.equal(full.find((e) => e.name === 'Plank').timed, 'sec');
   assert.equal(r.cardio.length, 2); // table-ish text skipped
+  const squat = full[0];
+  assert.deepEqual(squat.targets.map((t) => [t.from, t.sets]), [[1, 3], [3, 4]]);
+  assert.equal(squat.recommended, '24 kg × 10');
+  assert.deepEqual(squat.rec, [{ weight: 24, reps: 10 }]);
+  const cyc = full.find((e) => e.name === 'Cycling');
+  assert.deepEqual([cyc.sets, cyc.timed, cyc.rec[0].seconds], [1, 'min', 480]);
 });
 
 test('logs a workout and reads it back parsed', async () => {
@@ -88,4 +95,27 @@ test('a network failure to Notion gives a clear error, not a crash', async () =>
   const res = await handleApi(new Request('http://localhost/api/people/amir/workouts'), {}, broken);
   assert.equal(res.status, 500);
   assert.match((await res.json()).error, /fetch failed/);
+});
+
+test("parses Rozhin's Block 2 layout: Day D, Wk 3+ column, block start date", async () => {
+  const { parseRoutine, simplifyBlocks } = await import('../src/notion.js');
+  const cell = (t) => [{ plain_text: t }];
+  const row = (...c) => ({ type: 'table_row', table_row: { cells: c.map(cell) } });
+  const blocks = simplifyBlocks([
+    { type: 'callout', callout: { rich_text: [{ plain_text: 'Block 2, from ' }, { type: 'mention', plain_text: 'November 23, 2026', mention: { type: 'date', date: { start: '2026-11-23' } } }] } },
+    { type: 'heading_2', heading_2: { rich_text: cell('Weekly schedule') } },
+    { type: 'table', table: { has_column_header: true }, children: [row('Day', 'Session', 'If time is tight'), row('Fri', 'Day D: Lower body 2', '30-minute version'), row('Wed', 'Incline walk, 30 min, or rest', 'Skip')] },
+    { type: 'heading_2', heading_2: { rich_text: cell('Day D — Lower body 2') } },
+    { type: 'heading_3', heading_3: { rich_text: cell('45–60 minutes') } },
+    { type: 'table', table: { has_column_header: true }, children: [row('Exercise', 'Sets × reps (Wk 1–2)', 'Wk 3+', 'Note'), row('Dumbbell Romanian deadlift', '3 × 10', '4 × 8–10', 'Main lift'), row('Elliptical', '5–10 min', '5–10 min', ''), row('Suitcase carry (dumbbell)', '3 × 30 sec / side', '3 × 40 sec / side', '')] },
+  ]);
+  const r = parseRoutine(blocks);
+  assert.equal(r.block, 'Block 2');
+  assert.equal(r.blockStart, '2026-11-23');
+  assert.equal(r.schedule[0].session, 'Day D: Lower body 2');
+  const d = r.days.D.versions['45–60 minutes'];
+  assert.deepEqual(d[0].targets.map((t) => [t.from, t.sets, t.repsLow]), [[1, 3, 10], [3, 4, 8]]);
+  assert.deepEqual([d[1].sets, d[1].timed], [1, 'min']);
+  assert.equal(d[2].timed, 'sec');
+  assert.equal(d[0].note, 'Main lift');
 });

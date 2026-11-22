@@ -1,5 +1,7 @@
 // Small Notion API client plus helpers that turn Notion blocks into simple JSON.
 
+import { parseRecommendation } from './sets.js';
+
 const API = 'https://api.notion.com/v1';
 const VERSION = '2022-06-28';
 
@@ -98,6 +100,7 @@ export function simplifyRichText(rich = []) {
     if (a.code) seg.c = 1;
     if (a.strikethrough) seg.s = 1;
     if (r.href && /^https?:/.test(r.href)) seg.href = r.href;
+    if (r.type === 'mention' && r.mention?.type === 'date' && r.mention.date?.start) seg.date = r.mention.date.start.slice(0, 10);
     return seg;
   });
 }
@@ -138,15 +141,21 @@ function cellText(cell) {
 }
 
 // Parse "3 × 8–12", "2 × 8–10 / leg", "3 × 20–45 sec"
+// timed: false | 'sec' | 'min'
 export function parseTarget(text) {
   const t = String(text || '');
   const m = t.match(/(\d+)\s*[x×]\s*([\d]+)(?:\s*[–-]\s*(\d+))?\s*(sec|s\b|min)?/i);
-  if (!m) return { sets: null, repsLow: null, repsHigh: null, timed: false, perSide: false };
+  if (!m) {
+    // "5–8 min" (a machine block, no sets): one timed entry in minutes.
+    const mm = t.match(/^\s*(\d+)(?:\s*[–-]\s*(\d+))?\s*(min|sec)/i);
+    if (mm) return { sets: 1, repsLow: Number(mm[1]), repsHigh: Number(mm[2] || mm[1]), timed: mm[3].toLowerCase() === 'min' ? 'min' : 'sec', perSide: false };
+    return { sets: null, repsLow: null, repsHigh: null, timed: false, perSide: false };
+  }
   return {
     sets: Number(m[1]),
     repsLow: Number(m[2]),
     repsHigh: m[3] ? Number(m[3]) : Number(m[2]),
-    timed: !!m[4],
+    timed: m[4] ? (m[4].toLowerCase() === 'min' ? 'min' : 'sec') : false,
     perSide: /\/\s*(leg|side|arm)/i.test(t),
   };
 }
@@ -156,7 +165,7 @@ export function parseTarget(text) {
 //  - weekly schedule (Mon -> Strength A ...)
 //  - strength days: { A: { title, versions: { "30 minutes": [exercises], ... } } }
 export function parseRoutine(blocks) {
-  const result = { block: null, schedule: [], days: {}, cardio: [] };
+  const result = { block: null, blockStart: null, schedule: [], days: {}, cardio: [] };
   let h2 = '';
   let h3 = '';
 
@@ -165,7 +174,10 @@ export function parseRoutine(blocks) {
       const text = b.text ? plain(b.text).trim() : '';
       if (!result.block && text) {
         const m = text.match(/\bBlock\s+(\d+)/i);
-        if (m) result.block = `Block ${m[1]}`;
+        if (m) {
+          result.block = `Block ${m[1]}`;
+          result.blockStart = b.text.find((seg) => seg.date)?.date || null; // first date = block start
+        }
       }
       // Coach's cardio guidance: short paragraphs/bullets under a "Cardio ..." heading.
       if (/cardio|walk/i.test(h2) && !/^Day\s/i.test(h2) && ['paragraph', 'bulleted_list_item', 'numbered_list_item'].includes(b.type)
@@ -185,17 +197,27 @@ export function parseRoutine(blocks) {
         } else if (dayMatch) {
           const letter = dayMatch[1].toUpperCase();
           const day = (result.days[letter] ||= { letter, title: h2, versions: {} });
-          let iSets = header.findIndex((c) => c.includes('set'));
+          // Columns: exercise, one or more targets ("Sets × reps (Wk 1–2)", "Wk 3+"), Coach's
+          // per-person "Recommended" weight/reps, and a note.
+          const targetCols = header.map((h, i) => ({ h, i })).filter(({ h, i }) => i > 0 && (/set|rep/.test(h) || /^wk|week/.test(h)) && !/recommend|suggest/.test(h))
+            .map(({ h, i }) => ({ i, from: Number(h.match(/(?:wk|week)\s*(\d+)/)?.[1] || 1) }));
+          if (!targetCols.length) targetCols.push({ i: 1, from: 1 });
+          const iRec = header.findIndex((h) => /recommend|suggest|target (weight|load)/.test(h));
           let iNote = header.findIndex((c) => c.includes('note'));
-          if (iSets < 0) iSets = 1;
-          if (iNote < 0) iNote = 2;
+          if (iNote < 0 && !b.header) iNote = 2;
           const version = h3 || 'Workout';
-          day.versions[version] = body.filter((r) => r[0]).map((r) => ({
-            name: r[0],
-            target: r[iSets] || '',
-            note: r[iNote] || '',
-            ...parseTarget(r[iSets]),
-          }));
+          day.versions[version] = body.filter((r) => r[0]).map((r) => {
+            const targets = targetCols.map(({ i, from }) => ({ from, target: r[i] || '', ...parseTarget(r[i]) }));
+            const recommended = iRec > 0 ? r[iRec] || '' : '';
+            return {
+              name: r[0],
+              ...targets[0],
+              targets,
+              note: iNote > 0 ? r[iNote] || '' : '',
+              recommended,
+              rec: parseRecommendation(recommended),
+            };
+          });
         }
       }
       if (b.children && b.type !== 'table') visit(b.children);

@@ -11,7 +11,10 @@
 const NUM = '(\\d+(?:[.,]\\d+)?)';
 
 export function formatSet(s) {
-  if (s.seconds != null && !s.reps) return `${trim(s.seconds)}s`;
+  if (s.seconds != null && !s.reps) {
+    const sec = Number(s.seconds);
+    return sec >= 60 && sec % 60 === 0 ? `${trim(sec / 60)}min` : `${trim(sec)}s`;
+  }
   const reps = s.reps != null ? trim(s.reps) : '?';
   if (s.weight == null || s.weight === '' || Number(s.weight) === 0) return `BW×${reps}`;
   return `${trim(s.weight)}kg×${reps}`;
@@ -56,6 +59,10 @@ export function parseSet(raw) {
   if ((m = t.match(new RegExp(`^${NUM} ?(s|sec|secs|seconds)$`)))) {
     return [{ weight: null, reps: null, seconds: num(m[1]) }];
   }
+  // "8min", "10 minutes"
+  if ((m = t.match(new RegExp(`^${NUM} ?(min|mins|minutes?)$`)))) {
+    return [{ weight: null, reps: null, seconds: num(m[1]) * 60 }];
+  }
   // "12" or "12 reps"
   if ((m = t.match(/^(\d+)(?: ?reps?)?$/))) return [{ weight: null, reps: Number(m[1]) }];
   return null;
@@ -85,4 +92,29 @@ export function parseExercises(text) {
 // Normalise exercise names so "Goblet Squat" and "goblet squat " group together.
 export function exerciseKey(name) {
   return String(name).toLowerCase().replace(/\(.*?\)/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+// Coach's "Recommended" cell -> one entry per set (weight in kg, reps or seconds).
+// Understands: "12 kg × 10", "12 kg × 10, 10, 8", "12×10, 14×8", "12 kg" (weight only),
+// "× 12" / "12 reps" (bodyweight), "40 sec", "8 min", "25 lb × 10".
+export function parseRecommendation(text) {
+  const out = [];
+  let lastWeight = null;
+  for (const raw of String(text || '').split(/,|;|\n/)) {
+    const t = raw.trim().toLowerCase().replace(/\s+/g, ' ').replace(/^[x×*] ?/, '');
+    if (!t || t === '—' || t === '-') continue;
+    let m;
+    const parsed = parseSet(t);
+    if (parsed) {
+      for (const p of parsed) {
+        if (p.weight != null) lastWeight = p.weight;
+        else if (p.reps != null && lastWeight != null && !/^bw|bodyweight/.test(t)) p.weight = lastWeight;
+        out.push(p);
+      }
+    } else if ((m = t.match(new RegExp(`^${NUM} ?(kg|lbs?)$`)))) {
+      lastWeight = toKg(num(m[1]), m[2]);
+      out.push({ weight: lastWeight, reps: null });
+    }
+  }
+  return out;
 }

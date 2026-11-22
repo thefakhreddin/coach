@@ -142,6 +142,7 @@ label { display: block; font-size: .85rem; color: var(--text-2); margin-bottom: 
 .today-head .muted { font-size: 15px; }
 .exercise h3 { margin: 0; }
 .exercise .meta { font-size: .85rem; color: var(--text-2); margin: .15rem 0 .6rem; }
+.exercise .rec { font-size: 14px; color: var(--text-2); margin: -.3rem 0 .4rem; }
 .exercise .last { font-size: .8rem; color: var(--muted); margin-bottom: .5rem; }
 .sets { display: grid; gap: .4rem; }
 .set { display: grid; grid-template-columns: 1.6rem 1fr 1fr 2.9rem; gap: .5rem; align-items: center; }
