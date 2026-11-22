@@ -119,3 +119,40 @@ test("parses Rozhin's Block 2 layout: Day D, Wk 3+ column, block start date", as
   assert.equal(d[2].timed, 'sec');
   assert.equal(d[0].note, 'Main lift');
 });
+
+test('Exercise Plan is read per person; Set Log upserts by Session ID without duplicates', async () => {
+  const cookie = await login();
+  const plan = await (await call('people/rozhin/plan', {}, cookie)).json();
+  assert.deepEqual(Object.keys(plan.days).sort(), ['A', 'B', 'C', 'Cardio', 'D']);
+  const lat = plan.days.A.versions['45–60 minutes'].find((e) => e.name === 'Lat pulldown (cable)');
+  assert.deepEqual([lat.recommended, lat.rec[0].weight, lat.rec[0].reps, lat.repsLow, lat.target], ['25 kg × 12', 25, 12, 10, '3 × 10–15']);
+  assert.equal(plan.days.A.versions['30 minutes'].some((e) => e.name === 'Treadmill'), false);
+  const amir = await (await call('people/amir/plan', {}, cookie)).json();
+  assert.deepEqual(Object.keys(amir.days).sort(), ['A', 'B', 'C', 'Cardio']);
+  const plank = amir.days.A.versions['45–60 minutes'].find((e) => e.name === 'Plank');
+  assert.deepEqual([plank.timed, plank.rec[0].seconds, plank.recommended], ['sec', 40, '40 sec']);
+
+  const session = { sessionId: '2026-11-23-Rozhin-A', date: '2026-11-23', day: 'A' };
+  const items = [
+    { key: 'k1', exercise: 'Lat pulldown (cable)', planId: lat.planId, set: 1, weight: 25, reps: 12, unit: 'reps', recW: 25, recR: 12, completed: true },
+    { key: 'k2', exercise: 'Lat pulldown (cable)', planId: lat.planId, set: 2, weight: 25, reps: 11, unit: 'reps', completed: true },
+    { key: 'k3', exercise: 'Plank', set: 1, weight: null, reps: 40, unit: 'sec', completed: true },
+  ];
+  const r1 = await (await call('people/rozhin/setlog', { method: 'POST', body: { ...session, items } }, cookie)).json();
+  assert.equal(Object.keys(r1.saved).length, 3);
+  // Saving again (even without page ids) updates instead of duplicating.
+  items[1].reps = 10;
+  const r2 = await (await call('people/rozhin/setlog', { method: 'POST', body: { ...session, items } }, cookie)).json();
+  assert.equal(r2.errors.length, 0);
+  let sets = await (await call('people/rozhin/sets', {}, cookie)).json();
+  assert.equal(sets.length, 3);
+  const s2 = sets.find((x) => x.set === 2);
+  assert.deepEqual([s2.reps, s2.planId, s2.sessionId, s2.unit, s2.completed], [10, lat.planId, session.sessionId, 'reps', true]);
+  assert.equal(sets.find((x) => x.exercise === 'Plank').weight, null);
+  // Removing a set archives its row.
+  await call('people/rozhin/setlog', { method: 'POST', body: { ...session, items: [{ key: 'k2', pageId: r1.saved.k2, exercise: 'Lat pulldown (cable)', set: 2, remove: true }] } }, cookie);
+  sets = await (await call('people/rozhin/sets', {}, cookie)).json();
+  assert.equal(sets.length, 2);
+  // Amir sees none of Rozhin's sets.
+  assert.equal((await (await call('people/amir/sets', {}, cookie)).json()).length, 0);
+});

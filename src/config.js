@@ -40,6 +40,8 @@ export const PEOPLE = {
 // Pages shared by both people.
 export const SHARED = {
   meals: '41ad0dc263798115ae38d4ae14d49010', // Shared Meals & Prep (both meal plans side by side + prep steps)
+  exercisePlan: '420d0dc2637981fcb3f3d392b59987b7', // Exercise Plan: one row per exercise per person (READ only)
+  setLog: '420d0dc26379810dbb86d7c62f374d8e', // Set Log: one row per set performed (WRITE)
 };
 
 export const ROUTINE_BLOCK_OPTIONS = ['Block 1', 'Block 2', 'Block 3', 'Other'];

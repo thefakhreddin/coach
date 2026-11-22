@@ -1,6 +1,7 @@
 // All /api/* routes. Runtime-agnostic: takes a Web Request, returns a Web Response.
 import { PEOPLE, SHARED, ROUTINE_BLOCK_OPTIONS } from './config.js';
 import { parseMealsPage, parseTargets } from './meals.js';
+import { planFromRows, setFromPage, setLogProps } from './setlog.js';
 import { fetchBlockTree, simplifyBlocks, parseRoutine, plain } from './notion.js';
 import { formatExercises, parseExercises } from './sets.js';
 import { authEnabled, checkPassword, makeSessionCookie, clearSessionCookie, isAuthenticated } from './auth.js';
@@ -73,6 +74,54 @@ export async function handleApi(request, env, client) {
     if (resource === 'profile' && method === 'GET') {
       const doc = await getDoc(client, person.pages.overview, fresh);
       return json({ targets: parseTargets(doc.blocks) });
+    }
+
+    // Coach's Exercise Plan (read only): Active rows for this person.
+    if (resource === 'plan' && method === 'GET') {
+      const rows = await client.queryDatabase(SHARED.exercisePlan, {
+        filter: { and: [{ property: 'Person', select: { equals: person.name } }, { property: 'Active', checkbox: { equals: true } }] },
+        sorts: [{ property: 'Order', direction: 'ascending' }],
+      });
+      return json(planFromRows(rows));
+    }
+
+    // Set Log: every set this person has logged (newest first).
+    if (resource === 'sets' && method === 'GET') {
+      const rows = await client.queryDatabase(SHARED.setLog, {
+        filter: { property: 'Person', select: { equals: person.name } },
+        sorts: [{ property: 'Date', direction: 'descending' }],
+      });
+      return json(rows.map(setFromPage));
+    }
+
+    // Upsert one workout's sets: { sessionId, date, day, items: [{ key, pageId?, remove?, ...set }] }.
+    // Existing rows are matched by Session ID, so saving twice never duplicates.
+    if (resource === 'setlog' && method === 'POST') {
+      const b = await request.json();
+      if (!b.sessionId || !Array.isArray(b.items)) return json({ error: 'sessionId and items are required' }, 400);
+      if (b.items.length > 40) return json({ error: 'Too many sets in one save' }, 400);
+      const existing = await client.queryDatabase(SHARED.setLog, {
+        filter: { and: [{ property: 'Session ID', rich_text: { equals: b.sessionId } }, { property: 'Person', select: { equals: person.name } }] },
+      });
+      const byId = new Map(existing.map((p) => [normId(p.id), p]));
+      const byKey = new Map(existing.map((p) => { const x = setFromPage(p); return [`${x.exercise.toLowerCase()}|${x.set}`, p]; }));
+      const saved = {}, removed = [], errors = [];
+      for (const it of b.items) {
+        const match = (it.pageId && byId.get(normId(it.pageId))) || byKey.get(`${String(it.exercise || '').toLowerCase()}|${it.set}`);
+        try {
+          if (it.remove) {
+            if (match) await client.archivePage(match.id);
+            removed.push(it.key);
+          } else {
+            const props = setLogProps(person, b, it);
+            const page = match ? await client.updatePage(match.id, props) : await client.createPage(SHARED.setLog, props);
+            saved[it.key] = page.id;
+          }
+        } catch (err) {
+          errors.push({ key: it.key, error: err.message });
+        }
+      }
+      return json({ saved, removed, errors });
     }
 
     if (resource === 'workouts' && method === 'GET') {

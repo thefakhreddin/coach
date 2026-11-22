@@ -101,6 +101,63 @@ function profilePage(p) {
     ['Daily energy', amir ? '2,000 kcal' : '1,600 kcal'], ['Protein', amir ? '150 g' : '120 g']]), table: { has_column_header: false } }];
 }
 
+// Exercise Plan rows (mirrors Coach's database).
+function planRows() {
+  const P = (person, day, session, order, name, type, sets, range, unit, in30, recW = null, recR = null) => ({
+    Exercise: { title: [{ text: { content: name } }] }, Person: { select: { name: person } }, Day: { select: { name: day } },
+    Session: { rich_text: [{ text: { content: session } }] }, Order: { number: order }, Type: { select: { name: type } },
+    Sets: { number: sets }, 'Rep Range': { rich_text: [{ text: { content: range } }] }, Unit: { select: { name: unit } },
+    'In 30-min Version': { checkbox: in30 }, Active: { checkbox: true }, Block: { select: { name: person === 'Amir' ? 'Block 1' : 'Block 2' } },
+    'Recommended Weight (kg)': { number: recW }, 'Recommended Reps': { number: recR }, 'Coach Note': { rich_text: [] },
+  });
+  const A = 'Amir', R = 'Rozhin';
+  return [
+    P(A, 'A', 'Strength A', 1, 'Goblet squat', 'Strength', 3, '8-12', 'reps', true, 24, 10),
+    P(A, 'A', 'Strength A', 2, 'Dumbbell or cable row', 'Strength', 3, '8-12', 'reps', true, 22, 12),
+    P(A, 'A', 'Strength A', 3, 'Dumbbell floor or bench press', 'Strength', 3, '8-12', 'reps', true, 18),
+    P(A, 'A', 'Strength A', 4, 'Reverse lunge', 'Strength', 3, '8-10 / leg', 'reps', true),
+    P(A, 'A', 'Strength A', 5, 'Dumbbell or cable shoulder press', 'Strength', 3, '8-12', 'reps', true),
+    P(A, 'A', 'Strength A', 6, 'Cable face pull', 'Strength', 3, '12-15', 'reps', false, null, 15),
+    P(A, 'A', 'Strength A', 7, 'Plank', 'Core', 3, '20-45 sec', 'sec', false, null, 40),
+    P(A, 'B', 'Strength B', 1, 'Dumbbell Romanian deadlift', 'Strength', 3, '8-12', 'reps', true),
+    P(A, 'B', 'Strength B', 2, 'Push-ups or dumbbell press', 'Strength', 3, '8-12', 'reps', true),
+    P(A, 'B', 'Strength B', 3, 'Single-arm row', 'Strength', 3, '8-12 / side', 'reps', true),
+    P(A, 'B', 'Strength B', 4, 'Step-up or split squat', 'Strength', 3, '8-10 / leg', 'reps', true),
+    P(A, 'B', 'Strength B', 5, 'Dumbbell lateral raise', 'Strength', 3, '10-15', 'reps', true),
+    P(A, 'C', 'Strength C', 1, 'Dumbbell split squat', 'Strength', 3, '8-10 / leg', 'reps', true),
+    P(A, 'C', 'Strength C', 2, 'Cable or dumbbell row', 'Strength', 3, '8-12', 'reps', true),
+    P(A, 'C', 'Strength C', 3, 'Dumbbell shoulder press', 'Strength', 3, '8-12', 'reps', true),
+    P(A, 'C', 'Strength C', 4, 'Glute bridge or hip thrust', 'Strength', 3, '10-15', 'reps', true),
+    P(A, 'C', 'Strength C', 5, 'Pallof press or cable chop', 'Core', 3, '8-12 / side', 'reps', true),
+    P(A, 'Cardio', 'Incline walk', 1, 'Incline walk', 'Cardio', 1, '30-60 min, 4-8% incline', 'min', true, null, 30),
+    P(R, 'A', 'Upper body', 1, 'Treadmill', 'Cardio', 1, '5-8 min', 'min', false),
+    P(R, 'A', 'Upper body', 2, 'Lat pulldown (cable)', 'Strength', 3, '10-15', 'reps', true, 25, 12),
+    P(R, 'A', 'Upper body', 3, 'Chest press (dumbbell)', 'Strength', 3, '8-10', 'reps', true),
+    P(R, 'B', 'Lower body', 1, 'Goblet squat', 'Strength', 3, '15-20', 'reps', true),
+    P(R, 'B', 'Lower body', 2, 'Dumbbell hip thrust', 'Strength', 3, '10-12', 'reps', true),
+    P(R, 'C', 'Upper body 2', 1, 'Dumbbell row', 'Strength', 3, '12 / side', 'reps', true),
+    P(R, 'C', 'Upper body 2', 2, 'Bicep curl (cable)', 'Strength', 3, '12', 'reps', true),
+    P(R, 'D', 'Lower body 2', 1, 'Dumbbell Romanian deadlift', 'Strength', 3, '10', 'reps', true),
+    P(R, 'D', 'Lower body 2', 2, 'Suitcase carry (dumbbell)', 'Core', 3, '30 sec / side', 'sec', true),
+    P(R, 'Cardio', 'Incline walk', 1, 'Incline walk', 'Cardio', 1, '30 min, 4-8% incline', 'min', true),
+  ];
+}
+
+// Tiny subset of Notion's filter language: and / select / checkbox / rich_text equals.
+function matches(row, f) {
+  if (!f) return true;
+  if (f.and) return f.and.every((x) => matches(row, x));
+  const p = row.properties[f.property];
+  if (f.select) return p?.select?.name === f.select.equals;
+  if (f.checkbox) return !!p?.checkbox === f.checkbox.equals;
+  if (f.rich_text) return (p?.rich_text || []).map((t) => t.plain_text ?? t.text?.content).join('') === f.rich_text.equals;
+  return true;
+}
+function sortValue(row, prop) {
+  const p = row.properties[prop];
+  return p?.date?.start ?? p?.number ?? p?.select?.name ?? '';
+}
+
 function simplePage(title, lines) {
   return [blk('heading_2', title), ...lines.map((l) => blk('bulleted_list_item', l))];
 }
@@ -115,6 +172,8 @@ export function createMockClient() {
     for (const db of Object.values(p.dbs)) dbRows[db] = [];
   }
   pages[SHARED.meals] = mealsPage();
+  dbRows[SHARED.exercisePlan] = planRows().map((props) => toPage(SHARED.exercisePlan, props));
+  dbRows[SHARED.setLog] = [];
   seedHistory(dbRows, PEOPLE.amir, 20);
   seedHistory(dbRows, PEOPLE.rozhin, 10);
 
@@ -133,9 +192,14 @@ export function createMockClient() {
       return found?.children ? structuredClone(found.children).map(({ children, ...b }) => b) : [];
     },
     async queryDatabase(db, body = {}) {
-      const rows = (dbRows[db] || []).filter((r) => !r.archived);
-      const dir = body.sorts?.[0]?.direction === 'descending' ? -1 : 1;
-      return [...rows].sort((a, b) => dir * a.properties.Date.date.start.localeCompare(b.properties.Date.date.start));
+      const rows = (dbRows[db] || []).filter((r) => !r.archived && matches(r, body.filter));
+      const sort = body.sorts?.[0];
+      if (!sort) return [...rows];
+      const dir = sort.direction === 'descending' ? -1 : 1;
+      return [...rows].sort((a, b) => {
+        const x = sortValue(a, sort.property), y = sortValue(b, sort.property);
+        return dir * (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y)));
+      });
     },
     async createPage(db, properties) {
       const page = toPage(db, properties);

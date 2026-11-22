@@ -78,6 +78,49 @@ async function loadMeals({ fresh = false } = {}) {
   return state.meals;
 }
 
+// Coach's Exercise Plan database, if readable; otherwise the Current Routine page.
+async function loadRoutineView() {
+  const [routine, plan] = await Promise.all([load('routine'), load('plan').catch(() => null)]);
+  if (!plan?.count) return { ...routine, source: 'page' };
+  const days = Object.fromEntries(Object.entries(plan.days).filter(([k]) => k !== 'Cardio'));
+  return { ...routine, days, cardioPlan: plan.days.Cardio || null, block: plan.block || routine.block, blockStart: null, source: 'plan' };
+}
+const strengthLetters = (rv) => Object.keys(rv.days).filter((k) => /^[A-Z]$/.test(k)).sort();
+function dayName(rv, letter) {
+  const t = String(rv.days[letter]?.title || '').replace(/^Day [A-Z]\s*[—:-]\s*/i, '').trim();
+  if (!t) return `Strength ${letter}`;
+  return new RegExp(`\\b${letter}$`).test(t) ? t : `${letter} · ${t}`;
+}
+const unitOf = (ex) => ex.unit || (ex.timed === 'min' ? 'min' : ex.timed ? 'sec' : 'reps');
+const newKey = () => Math.random().toString(36).slice(2, 10);
+
+// Every logged session, newest first: Set Log (one row per set) plus older Workout Log text rows.
+function history(workouts = [], sets = []) {
+  const groups = new Map();
+  for (const r of sets) {
+    if (!r.date) continue;
+    const gk = r.sessionId || r.date;
+    const g = groups.get(gk) || { date: r.date, session: r.day ? `Day ${r.day}` : '', ex: new Map() };
+    const ek = exKey(r.exercise);
+    const e = g.ex.get(ek) || { name: r.exercise, planId: r.planId, sets: [] };
+    e.sets.push({ n: r.set || e.sets.length + 1, weight: r.weight, reps: r.unit === 'reps' ? r.reps : null, seconds: r.unit === 'sec' ? r.reps : r.unit === 'min' ? (r.reps || 0) * 60 : null });
+    g.ex.set(ek, e);
+    groups.set(gk, g);
+  }
+  const out = [...groups.values()].map((g) => ({ date: g.date, session: g.session, exercises: [...g.ex.values()].map((e) => ({ ...e, sets: e.sets.sort((a, b) => a.n - b.n) })) }));
+  const fromSetLog = new Set(out.flatMap((g) => g.exercises.map((e) => `${g.date}|${exKey(e.name)}`)));
+  for (const w of workouts) {
+    const exercises = w.exercises.filter((e) => !fromSetLog.has(`${w.date}|${exKey(e.name)}`));
+    if (exercises.length) out.push({ date: w.date, session: w.session, exercises });
+  }
+  return out.filter((g) => g.date).sort((a, b) => b.date.localeCompare(a.date));
+}
+function lastByExercise(hist, beforeIso) {
+  const map = {};
+  for (const g of hist) if (g.date < beforeIso) for (const e of g.exercises) { map[exKey(e.name)] ||= { date: g.date, sets: e.sets }; if (e.planId) map[e.planId] ||= map[exKey(e.name)]; }
+  return map;
+}
+
 function mealsFor(personId, iso) {
   const plan = state.meals?.people?.[personId];
   if (!plan) return [];
@@ -158,18 +201,19 @@ async function flush(key) {
   if (!entry) { markPending(key, false); return; }
   const spec = entry.type === 'weigh' ? weighSpec : gymSpec;
   const body = spec.body(entry);
-  if (!body) { markPending(key, false); setStatus(key, 'idle'); return; }
+  if (!body && !(spec.after && Object.keys(entry.log || {}).length)) { markPending(key, false); setStatus(key, 'idle'); return; }
   saver.busy[key] = true;
   setStatus(key, 'saving');
   try {
     const base = `people/${entry.person}/${spec.resource}`;
-    const saved = entry.pageId
+    const saved = !body ? { id: entry.pageId } : entry.pageId
       ? await api(`${base}/${entry.pageId}`, { method: 'PATCH', body })
       : await api(base, { method: 'POST', body });
     const latest = store.get(key) || entry;
     latest.pageId = saved.id;
     store.set(key, latest);
     spec.onSaved(entry.person, saved);
+    if (spec.after) await spec.after(key);
     markPending(key, false);
     setStatus(key, 'saved');
   } catch (err) {
@@ -208,8 +252,57 @@ const gymSpec = {
     if (!exercises.length && !cardio && !g.notes?.trim() && !num(g.rpe)) return null;
     return { date: g.date, session: g.session, block: g.block, durationMin: num(g.durationMin) ?? (num(c.minutes) && !exercises.length ? num(c.minutes) : null), rpe: num(g.rpe), notes: g.notes || '', cardio, exercises };
   },
-  onSaved: (person, saved) => { const c = (state.cache[person] ||= {}); if (c.workouts) c.workouts = upsert(c.workouts, saved, 'date', true); },
+  onSaved: (person, saved) => { const c = (state.cache[person] ||= {}); if (saved?.date && c.workouts) c.workouts = upsert(c.workouts, saved, 'date', true); },
+  after: syncSetLog,
 };
+
+// Push changed sets to Coach's Set Log (one row per set), and remove rows for cleared sets.
+const sigOf = (it) => [it.exercise, it.set, it.weight, it.reps, it.unit, it.completed].join('|');
+async function syncSetLog(key) {
+  const g = store.get(key);
+  if (!g) return;
+  const log = g.log || {};
+  const items = [];
+  const live = new Set();
+  g.exercises.forEach((ex) => {
+    let n = 0;
+    ex.sets.forEach((s) => {
+      const val = ex.timed ? num(s.seconds) : num(s.reps);
+      if (!(val > 0)) return;
+      n++;
+      s.key ||= newKey();
+      live.add(s.key);
+      items.push({ key: s.key, pageId: log[s.key]?.id || null, exercise: ex.name, planId: ex.planId || null, set: n, weight: num(s.weight),
+        reps: val, unit: unitOf(ex), recW: s.recW ?? null, recR: s.recR ?? null, completed: !!s.done });
+    });
+  });
+  if (g.choice.kind === 'cardio' && num(g.cardio?.minutes) > 0) {
+    live.add('cardio');
+    items.push({ key: 'cardio', pageId: log.cardio?.id || null, exercise: g.cardioName || 'Incline walk', planId: g.cardioPlanId || null, set: 1, weight: null,
+      reps: num(g.cardio.minutes), unit: 'min', recW: null, recR: g.cardioRec ?? null, completed: true, day: 'Cardio' });
+  }
+  const changed = items.filter((it) => log[it.key]?.sig !== sigOf(it));
+  const removals = Object.entries(log).filter(([k]) => !live.has(k)).map(([k, v]) => ({ key: k, pageId: v.id, exercise: v.exercise, set: v.set, remove: true }));
+  const todo = [...changed, ...removals];
+  if (!todo.length) return;
+  const day = g.choice.kind === 'strength' ? g.choice.letter : g.choice.kind === 'cardio' ? 'Cardio' : 'Other';
+  let failed = 0;
+  for (let i = 0; i < todo.length; i += 20) {
+    const batch = todo.slice(i, i + 20);
+    const res = await api(`people/${g.person}/setlog`, { method: 'POST', body: { sessionId: g.sessionId, date: g.date, day, items: batch } });
+    const latest = store.get(key) || g;
+    latest.log ||= {};
+    for (const it of batch) {
+      if (res.saved[it.key]) latest.log[it.key] = { id: res.saved[it.key], sig: sigOf(it), exercise: it.exercise, set: it.set };
+      if (res.removed.includes(it.key)) delete latest.log[it.key];
+    }
+    store.set(key, latest);
+    failed += res.errors.length;
+  }
+  const c = state.cache[g.person];
+  if (c) delete c.sets; // re-read next time
+  if (failed) throw new Error(`${failed} set(s) not saved to Set Log`);
+}
 
 // ================= boot =================
 function showLogin() {
@@ -283,7 +376,7 @@ function go(tab) {
 $('#tabs').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) go(b.dataset.tab); });
 $('#refresh').addEventListener('click', async () => {
   state.cache = {};
-  try { await Promise.all([loadMeals({ fresh: true }), load('routine', { fresh: true }), load('profile', { fresh: true })]); } catch { /* shown below */ }
+  try { await Promise.all([loadMeals({ fresh: true }), load('routine', { fresh: true }), load('profile', { fresh: true }), load('plan').catch(() => null)]); } catch { /* shown below */ }
   render();
   toast('Reloaded from Notion');
 });
@@ -324,7 +417,7 @@ function drawMacroDonut(el, t, opts = {}) {
 // ================= TODAY =================
 async function renderToday(view, alive) {
   const iso = todayISO();
-  const [routine, weighins, profile] = await Promise.all([load('routine'), load('weighins'), load('profile').catch(() => ({ targets: {} })), loadMeals()]);
+  const [routine, weighins, profile] = await Promise.all([loadRoutineView(), load('weighins'), load('profile').catch(() => ({ targets: {} })), loadMeals()]);
   const workouts = await load('workouts');
   if (!alive()) return;
   const meals = mealsFor(state.person, iso);
@@ -349,8 +442,8 @@ async function renderToday(view, alive) {
     const day = routine.days[plan.letter];
     const version = gymState?.version || defaultVersion(routine, plan.letter);
     const list = day.versions[version] || [];
-    workoutHtml = `<div class="card-title"><h2>🏋️ ${esc(plan.label)}</h2><span class="status">${esc(version || '')}</span></div>
-      <div class="muted small" style="margin:-.4rem 0 .4rem">${esc(day.title.replace(/^Day [A-Z]\s*[—-]\s*/, ''))}</div>
+    workoutHtml = `<div class="card-title"><h2>🏋️ ${esc(dayName(routine, plan.letter))}</h2><span class="status">${esc(version || '')}</span></div>
+      ${routine.source === 'page' ? `<div class="muted small" style="margin:-.4rem 0 .4rem">${esc(day.title.replace(/^Day [A-Z]\s*[—:-]\s*/, ''))}</div>` : ''}
       <div class="list">${list.map((ex) => `<div class="list-row"><span>${esc(ex.name)}${ex.recommended ? `<div class="sub">Coach: ${esc(ex.recommended)}</div>` : ''}</span><span class="right">${esc(targetFor(ex, blockWeek(routine)).target)}</span></div>`).join('')}</div>`;
   } else if (plan.kind === 'cardio') {
     workoutHtml = `<div class="card-title"><h2>🚶 ${esc(plan.label)}</h2></div>${cardioPlanHtml(routine)}`;
@@ -414,22 +507,27 @@ function cardioPlanHtml(routine) {
 // ================= GYM =================
 const gymKey = (iso, person = state.person) => `gym:${person}:${iso}`;
 
-function buildGym(routine, choice, version, workouts, iso) {
+function buildGym(routine, choice, version, hist, iso) {
+  const lastMap = lastByExercise(hist, iso);
   const last = {};
-  for (const w of workouts) if (w.date !== iso) for (const ex of w.exercises) last[exKey(ex.name)] ||= ex.sets;
+  for (const [k, v] of Object.entries(lastMap)) last[k] = v.sets;
+  const code = choice.kind === 'strength' ? choice.letter : choice.kind === 'cardio' ? 'Cardio' : 'Other';
   const g = { type: 'gym', person: state.person, date: iso, choice, version: null, block: routine.block, session: choice.label || 'Workout',
+    sessionId: `${iso}-${personName()}-${code}`, log: {},
     exercises: [], cardio: { minutes: '', incline: '', speed: '' }, durationMin: '', rpe: '', notes: '', pageId: null };
+  const cp = routine.cardioPlan?.versions['45–60 minutes']?.[0];
+  if (cp) Object.assign(g, { cardioName: cp.name, cardioPlanId: cp.planId, cardioRec: cp.rec?.[0]?.seconds ? cp.rec[0].seconds / 60 : null, cardioRange: cp.range });
   if (choice.kind === 'strength') {
-    g.session = `Strength ${choice.letter}`;
+    g.session = dayName(routine, choice.letter);
     g.version = version || defaultVersion(routine, choice.letter);
     const week = blockWeek(routine);
     for (const ex of routine.days[choice.letter]?.versions[g.version] || []) {
       const t = targetFor(ex, week);
-      const prev = last[exKey(ex.name)];
+      const prev = (ex.planId && last[ex.planId]) || last[exKey(ex.name)];
       const rec = ex.rec || [];
       const n = t.sets || rec.length || 3;
       g.exercises.push({
-        name: ex.name, target: t.target, note: ex.note, timed: t.timed, recommended: ex.recommended || '',
+        name: ex.name, planId: ex.planId || null, unit: ex.unit || null, target: t.target, note: ex.note, timed: t.timed, recommended: ex.recommended || '',
         sets: Array.from({ length: n }, (_, i) => {
           const r = rec.length ? rec[Math.min(i, rec.length - 1)] : null;
           const p = prev?.[Math.min(i, prev.length - 1)];
@@ -438,12 +536,43 @@ function buildGym(routine, choice, version, workouts, iso) {
           let hint = r ? (t.timed ? r.seconds : r.reps) : null;
           if (hint != null && t.timed === 'min') hint = hint / 60;
           if (hint == null) hint = t.repsLow ?? '';
-          return { weight: '', reps: '', seconds: '', hint, hintW, done: false };
+          // Snapshot of what Coach recommended, saved with each set in the Set Log.
+          const recW = r?.weight ?? null;
+          const recR = r ? (t.timed ? (t.timed === 'min' && r.seconds != null ? r.seconds / 60 : r.seconds) : r.reps) ?? null : null;
+          return { key: newKey(), weight: '', reps: '', seconds: '', hint, hintW, recW, recR, done: false };
         }),
       });
     }
   } else if (choice.kind === 'cardio') {
     g.session = choice.label?.replace(/ or cardio/i, '') || 'Incline walk';
+  }
+  return g;
+}
+
+// Fill a fresh plan with sets already in the Set Log today (e.g. logged on another phone).
+function adoptSetLog(g, rows) {
+  if (!rows.length) return g;
+  g.sessionId = rows[0].sessionId || g.sessionId;
+  const byEx = new Map();
+  for (const r of [...rows].sort((a, b) => (a.set || 0) - (b.set || 0))) {
+    const k = r.planId || exKey(r.exercise);
+    byEx.set(k, [...(byEx.get(k) || []), r]);
+  }
+  for (const [k, rs] of byEx) {
+    if (rs[0].day === 'Cardio' || (g.cardioPlanId && k === g.cardioPlanId)) {
+      g.cardio.minutes = rs[0].reps ?? '';
+      g.log.cardio = { id: rs[0].id, sig: null, exercise: rs[0].exercise, set: 1 };
+      continue;
+    }
+    let ex = g.exercises.find((e) => (e.planId && e.planId === k) || exKey(e.name) === k);
+    if (!ex) { ex = { name: rs[0].exercise, planId: rs[0].planId, unit: rs[0].unit, timed: rs[0].unit === 'reps' ? false : rs[0].unit, target: '', note: '', sets: [] }; g.exercises.push(ex); }
+    const planned = ex.sets;
+    ex.sets = rs.map((r, i) => {
+      const s = { ...(planned[i] || { hint: '', hintW: '' }), key: newKey(), weight: r.weight ?? '', reps: r.unit === 'reps' ? r.reps ?? '' : '', seconds: r.unit === 'reps' ? '' : r.reps ?? '', done: r.completed };
+      g.log[s.key] = { id: r.id, sig: null, exercise: r.exercise, set: r.set };
+      return s;
+    });
+    for (let i = ex.sets.length; i < planned.length; i++) ex.sets.push(planned[i]);
   }
   return g;
 }
@@ -470,33 +599,40 @@ function adoptLogged(g, logged) {
 
 async function renderGym(view, alive) {
   const iso = todayISO();
-  const [routine, workouts] = await Promise.all([load('routine'), load('workouts')]);
+  const [routine, workouts, sets] = await Promise.all([loadRoutineView(), load('workouts'), load('sets').catch(() => [])]);
   if (!alive()) return;
+  const hist = history(workouts, sets);
   const key = gymKey(iso);
   let g = store.get(key);
   if (!g) {
     const plan = plannedFor(routine, iso);
     const choice = plan.kind === 'rest' || plan.kind === 'other' ? { kind: 'rest', label: plan.label || 'Rest' } : plan;
-    g = buildGym(routine, choice, null, workouts, iso);
+    g = buildGym(routine, choice, null, hist, iso);
+    const todaySets = sets.filter((r) => r.date === iso);
+    if (todaySets.length) adoptSetLog(g, todaySets);
     const logged = workouts.find((w) => w.date === iso);
-    if (logged) adoptLogged(g, logged);
+    if (logged) { if (todaySets.length) g.pageId = logged.id; else adoptLogged(g, logged); }
     store.set(key, g);
   }
-  const last = {};
-  for (const w of workouts) if (w.date !== iso) for (const ex of w.exercises) last[exKey(ex.name)] ||= { date: w.date, sets: ex.sets };
-  const letters = Object.keys(routine.days).sort();
+  // Older saved drafts: give every set a stable key for the Set Log.
+  g.log ||= {};
+  g.sessionId ||= `${iso}-${personName()}-${g.choice.kind === 'strength' ? g.choice.letter : g.choice.kind === 'cardio' ? 'Cardio' : 'Other'}`;
+  for (const ex of g.exercises) for (const s of ex.sets) s.key ||= newKey();
+  store.set(key, g);
+  const last = lastByExercise(hist, iso);
+  const letters = strengthLetters(routine);
   const versions = g.choice.kind === 'strength' ? Object.keys(routine.days[g.choice.letter]?.versions || {}) : [];
   // The saver writes the Notion row id into storage after the first save; never overwrite it.
-  const keepId = () => { const cur = store.get(key); if (cur?.pageId) g.pageId = cur.pageId; };
+  const keepId = () => { const cur = store.get(key); if (cur?.pageId) g.pageId = cur.pageId; if (cur?.log) g.log = cur.log; };
   const save = () => { keepId(); store.set(key, g); scheduleSave(key); };
 
-  const title = g.choice.kind === 'strength' ? `Strength ${g.choice.letter}` : g.choice.kind === 'cardio' ? (g.session || 'Cardio') : 'Rest day';
-  const sub = g.choice.kind === 'strength' ? routine.days[g.choice.letter]?.title.replace(/^Day [A-Z]\s*[—-]\s*/, '') : '';
+  const title = g.choice.kind === 'strength' ? dayName(routine, g.choice.letter) : g.choice.kind === 'cardio' ? (g.session || 'Cardio') : 'Rest day';
+  const sub = g.choice.kind === 'strength' && routine.source === 'page' ? routine.days[g.choice.letter]?.title.replace(/^Day [A-Z]\s*[—:-]\s*/, '') : (routine.block || '');
   const cardioCard = (open) => `<div class="card">
       <div class="card-title"><h2>${open ? "🚶 Coach's plan" : '🚶 Cardio'}</h2></div>
-      ${open ? `<div style="margin:-.3rem 0 .8rem">${cardioPlanHtml(routine)}</div>` : '<p class="muted small" style="margin:-.3rem 0 .6rem">Optional on strength days.</p>'}
+      ${open ? `<div style="margin:-.3rem 0 .8rem">${g.cardioRange ? `<div class="rec">🎯 Plan: <b>${esc(g.cardioRange)}</b></div>` : ''}${cardioPlanHtml(routine)}</div>` : '<p class="muted small" style="margin:-.3rem 0 .6rem">Optional on strength days.</p>'}
       <div class="cardio-grid">
-        <div><label>Minutes</label><input data-cardio="minutes" inputmode="numeric" value="${esc(g.cardio.minutes)}" placeholder="30"></div>
+        <div><label>Minutes</label><input data-cardio="minutes" inputmode="numeric" value="${esc(g.cardio.minutes)}" placeholder="${esc(g.cardioRec || 30)}"></div>
         <div><label>Incline %</label><input data-cardio="incline" inputmode="decimal" value="${esc(g.cardio.incline)}" placeholder="6"></div>
         <div><label>Speed km/h</label><input data-cardio="speed" inputmode="decimal" value="${esc(g.cardio.speed)}" placeholder="5"></div>
       </div></div>`;
@@ -523,7 +659,7 @@ async function renderGym(view, alive) {
     </div>` : ''}
     <details class="card"><summary class="muted">Doing a different workout today?</summary>
       <div class="chips" id="choices" style="margin-top:.7rem">
-        ${letters.map((l) => `<button data-choice='${esc(JSON.stringify({ kind: 'strength', letter: l, label: `Strength ${l}` }))}' aria-pressed="${g.choice.kind === 'strength' && g.choice.letter === l}">Strength ${l}</button>`).join('')}
+        ${letters.map((l) => `<button data-choice='${esc(JSON.stringify({ kind: 'strength', letter: l, label: dayName(routine, l) }))}' aria-pressed="${g.choice.kind === 'strength' && g.choice.letter === l}">${esc(dayName(routine, l))}</button>`).join('')}
         <button data-choice='${esc(JSON.stringify({ kind: 'cardio', label: 'Incline walk' }))}' aria-pressed="${g.choice.kind === 'cardio'}">Cardio</button>
         <button data-choice='${esc(JSON.stringify({ kind: 'rest', label: 'Rest' }))}' aria-pressed="${g.choice.kind === 'rest'}">Rest</button>
       </div></details>
@@ -532,7 +668,7 @@ async function renderGym(view, alive) {
   const exWrap = $('#exercises');
   const renderExercises = () => {
     exWrap.innerHTML = g.exercises.map((ex, i) => {
-      const prev = last[exKey(ex.name)];
+      const prev = (ex.planId && last[ex.planId]) || last[exKey(ex.name)];
       return `<div class="card exercise" data-ex="${i}">
         <div class="row spread"><h3>${esc(ex.name)}</h3><button class="icon-btn" data-remove-ex="${i}" aria-label="Remove ${esc(ex.name)}">✕</button></div>
         <div class="meta">${esc([ex.target, ex.note].filter(Boolean).join(' · '))}</div>
@@ -599,7 +735,7 @@ async function renderGym(view, alive) {
         if (s.done && j + 1 < ex.sets.length && ex.sets[j + 1].weight === '' && s.weight !== '') ex.sets[j + 1].hintW = s.weight;
       } else if (e.target.closest('[data-add-set]')) {
         const p = ex.sets[ex.sets.length - 1] || {};
-        ex.sets.push({ weight: '', reps: '', seconds: '', hint: p.hint ?? '', hintW: p.weight || p.hintW || '', done: false });
+        ex.sets.push({ key: newKey(), weight: '', reps: '', seconds: '', hint: p.hint ?? '', hintW: p.weight || p.hintW || '', recW: p.recW ?? null, recR: p.recR ?? null, done: false });
       } else if (e.target.closest('[data-remove-ex]')) {
         if (!confirm(`Remove ${ex.name} from today?`)) return;
         g.exercises.splice(i, 1);
@@ -615,14 +751,14 @@ async function renderGym(view, alive) {
       const choice = c ? JSON.parse(c.dataset.choice) : g.choice;
       if (hasData && !confirm('Switch workout? Sets you entered for exercises not in the new plan will be dropped.')) return;
       if (v) localStorage.setItem('version', v.dataset.version);
-      const fresh = buildGym(routine, choice, v?.dataset.version, workouts, iso);
+      const fresh = buildGym(routine, choice, v?.dataset.version, hist, iso);
       // Keep sets already typed for exercises that exist in both plans.
       for (const ex of fresh.exercises) { const old = g.exercises.find((o) => exKey(o.name) === exKey(ex.name)); if (old) ex.sets = old.sets; }
       keepId();
-      Object.assign(fresh, { pageId: g.pageId, cardio: g.cardio, rpe: g.rpe, notes: g.notes, durationMin: g.durationMin });
+      Object.assign(fresh, { pageId: g.pageId, log: g.log, sessionId: g.sessionId, cardio: g.cardio, rpe: g.rpe, notes: g.notes, durationMin: g.durationMin });
       g = fresh;
       store.set(key, g);
-      if (g.pageId || gymSpec.body(g)) scheduleSave(key, 300);
+      if (g.pageId || gymSpec.body(g) || Object.keys(g.log || {}).length) scheduleSave(key, 300);
       renderGym(view, alive);
     }
   };
@@ -634,7 +770,7 @@ async function renderGym(view, alive) {
     input.value = '';
     input.blur();
     const prev = last[exKey(name)];
-    g.exercises.push({ name, target: '', note: '', sets: Array.from({ length: 3 }, (_, i) => ({ weight: '', reps: '', seconds: '', hintW: prev?.sets[i]?.weight ?? '', hint: prev?.sets[i]?.reps ?? '', done: false })) });
+    g.exercises.push({ name, target: '', note: '', unit: 'reps', sets: Array.from({ length: 3 }, (_, i) => ({ key: newKey(), weight: '', reps: '', seconds: '', hintW: prev?.sets[i]?.weight ?? '', hint: prev?.sets[i]?.reps ?? '', done: false })) });
     keepId();
     store.set(key, g);
     renderExercises();
@@ -736,8 +872,9 @@ async function renderKitchen(view, alive) {
 
 // ================= PROGRESS =================
 async function renderProgress(view, alive) {
-  const [workouts, weighins] = await Promise.all([load('workouts'), load('weighins')]);
+  const [workouts, weighins, setRows] = await Promise.all([load('workouts'), load('weighins'), load('sets').catch(() => [])]);
   if (!alive()) return;
+  const hist = history(workouts, setRows);
   const weights = weighins.filter((w) => w.weight != null && w.date);
   const waists = weighins.filter((w) => w.waist != null && w.date);
   const avgAt = (iso) => {
@@ -750,10 +887,10 @@ async function renderProgress(view, alive) {
   const change = latest && weights.length > 1 ? avgNow - weights[0].weight : null;
   const weekAgoAvg = latest ? avgAt(addDays(latest.date, -7)) : null;
   const ws = weekStart();
-  const thisWeek = workouts.filter((w) => w.date && parseDate(w.date) >= ws).length;
+  const thisWeek = new Set([...workouts.filter((w) => w.date && parseDate(w.date) >= ws).map((w) => w.date), ...hist.filter((g) => parseDate(g.date) >= ws).map((g) => g.date)]).size;
 
   const counts = {}, names = {};
-  for (const w of workouts) for (const ex of w.exercises) { const k = exKey(ex.name); counts[k] = (counts[k] || 0) + 1; names[k] ||= ex.name; }
+  for (const w of hist) for (const ex of w.exercises) { const k = exKey(ex.name); counts[k] = (counts[k] || 0) + 1; names[k] ||= ex.name; }
   const exKeys = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
   const selected = exKeys.includes(state.exercise) ? state.exercise : exKeys[0];
 
@@ -799,7 +936,7 @@ async function renderProgress(view, alive) {
   const drawExercise = (k) => {
     state.exercise = k;
     const rows = [];
-    for (const w of [...workouts].reverse()) {
+    for (const w of [...hist].reverse()) {
       const ex = w.exercises.find((e) => exKey(e.name) === k);
       if (!ex) continue;
       const best = ex.sets.reduce((a, s) => (e1rm(s) > e1rm(a) ? s : a), ex.sets[0]);
@@ -821,7 +958,7 @@ async function renderProgress(view, alive) {
   for (let i = 7; i >= 0; i--) {
     const start = new Date(ws); start.setDate(start.getDate() - i * 7);
     const end = new Date(start); end.setDate(end.getDate() + 7);
-    const inWeek = workouts.filter((w) => w.date && parseDate(w.date) >= start && parseDate(w.date) < end);
+    const inWeek = hist.filter((w) => w.date && parseDate(w.date) >= start && parseDate(w.date) < end);
     const vol = Math.round(inWeek.reduce((s, w) => s + volumeOf(w), 0));
     const label = start.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' });
     weeks.push({ label, value: vol, dim: i === 0, tip: `Week of ${label}: ${vol.toLocaleString()} kg, ${inWeek.length} session${inWeek.length === 1 ? '' : 's'}${i === 0 ? ' (so far)' : ''}` });
@@ -834,6 +971,7 @@ async function renderProgress(view, alive) {
     try {
       await api(`people/${state.person}/entries/${b.dataset.del}`, { method: 'DELETE' });
       pc().workouts = pc().workouts.filter((w) => w.id !== b.dataset.del);
+      delete pc().sets;
       for (const k of Object.keys(localStorage)) if (k.startsWith('gym:') && store.get(k)?.pageId === b.dataset.del) store.del(k);
       toast('Deleted');
       render();
@@ -843,7 +981,7 @@ async function renderProgress(view, alive) {
 
 // ================= WEEK =================
 async function renderWeek(view, alive) {
-  const [routine] = await Promise.all([load('routine'), loadMeals()]);
+  const [routine] = await Promise.all([loadRoutineView(), loadMeals()]);
   if (!alive()) return;
   const today = todayISO();
   const monday = isoOf(weekStart());
@@ -859,7 +997,7 @@ async function renderWeek(view, alive) {
       const exs = plan.kind === 'strength' ? (routine.days[plan.letter]?.versions[defaultVersion(routine, plan.letter)] || []) : [];
       return `<details class="card day-card ${iso === today ? 'today' : ''}" ${iso === today ? 'open' : ''}>
         <summary><div class="dname">${DAYS[parseDate(iso).getDay()]}</div>
-          <div><div class="dsub">${icon} ${esc(plan.label || 'Rest')}${iso === today ? '<span class="pill">Today</span>' : ''}</div><div class="dsub2">${esc(main)}${t.kcal ? ` · ${Math.round(t.kcal)} kcal` : ''}</div></div>
+          <div><div class="dsub">${icon} ${esc(plan.kind === 'strength' ? dayName(routine, plan.letter) : plan.label || 'Rest')}${iso === today ? '<span class="pill">Today</span>' : ''}</div><div class="dsub2">${esc(main)}${t.kcal ? ` · ${Math.round(t.kcal)} kcal` : ''}</div></div>
           <span class="chev">›</span></summary>
         <div class="body">
           ${exs.length ? `<div class="list">${exs.map((ex) => `<div class="list-row"><span>${esc(ex.name)}${ex.recommended ? `<div class="sub">Coach: ${esc(ex.recommended)}</div>` : ''}</span><span class="right">${esc(targetFor(ex, blockWeek(routine)).target)}</span></div>`).join('')}</div>` : ''}
