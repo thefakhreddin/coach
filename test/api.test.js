@@ -156,3 +156,22 @@ test('Exercise Plan is read per person; Set Log upserts by Session ID without du
   // Amir sees none of Rozhin's sets.
   assert.equal((await (await call('people/amir/sets', {}, cookie)).json()).length, 0);
 });
+
+test('health check reports each Notion source without needing a login', async () => {
+  const res = await handleApi(new Request('http://localhost/api/health'), env, client);
+  const h = await res.json();
+  assert.equal(h.ok, true);
+  assert.equal(h.checks['Set Log'], 'ok');
+  assert.equal(h.checks['Rozhin – Current Routine'], 'ok');
+  const broken = { ...client, canRead: async (id) => { if (id.startsWith('420d0dc26379810d')) throw Object.assign(new Error('x'), { code: 'object_not_found' }); return true; } };
+  const h2 = await (await handleApi(new Request('http://localhost/api/health'), env, broken)).json();
+  assert.deepEqual([h2.ok, h2.checks['Set Log']], [false, 'object_not_found']);
+});
+
+test('Set Log rows get their Exercise Plan link even when the app did not send one', async () => {
+  const cookie = await login();
+  const r = await (await call('people/amir/setlog', { method: 'POST', body: { sessionId: '2026-11-30-Amir-A', date: '2026-11-30', day: 'A', items: [{ key: 'z1', exercise: 'Goblet squat', set: 1, weight: 20, reps: 10, unit: 'reps', completed: true }] } }, cookie)).json();
+  assert.equal(r.errors.length, 0);
+  const row = (await (await call('people/amir/sets', {}, cookie)).json()).find((x) => x.sessionId === '2026-11-30-Amir-A');
+  assert.ok(row.planId, 'planId filled from Exercise Plan by name');
+});

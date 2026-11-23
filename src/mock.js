@@ -206,6 +206,7 @@ export function createMockClient() {
       (dbRows[db] ||= []).push(page);
       return page;
     },
+    async canRead() { return true; },
     async retrievePage(id) {
       const hit = findPage(id);
       if (!hit) throw Object.assign(new Error('Not found'), { status: 404, code: 'object_not_found' });

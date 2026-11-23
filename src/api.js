@@ -37,6 +37,24 @@ export async function handleApi(request, env, client) {
     if (parts[0] === 'logout' && method === 'POST') {
       return json({ ok: true }, 200, { 'Set-Cookie': clearSessionCookie(secure) });
     }
+    // Public health check: can the server reach each Notion database/page? (yes/no only, no data)
+    if (parts[0] === 'health' && method === 'GET') {
+      if (!client) return json({ ok: false, error: 'NOTION_TOKEN is not set' }, 500);
+      const targets = [
+        ['Exercise Plan', SHARED.exercisePlan, 'db'], ['Set Log', SHARED.setLog, 'db'], ['Shared Meals & Prep', SHARED.meals, 'page'],
+        ...Object.values(PEOPLE).flatMap((p) => [
+          [`${p.name} – Workout Log`, p.dbs.workouts, 'db'], [`${p.name} – Weigh-ins`, p.dbs.weighins, 'db'],
+          [`${p.name} – Current Routine`, p.pages.routine, 'page'], [`${p.name} – profile page`, p.pages.overview, 'page'],
+        ]),
+      ];
+      const checks = {};
+      for (const [name, id, kind] of targets) {
+        try { await client.canRead(id, kind); checks[name] = 'ok'; } catch (err) { checks[name] = err.code || err.message || 'error'; }
+      }
+      const ok = Object.values(checks).every((v) => v === 'ok');
+      return json({ ok, checks, version: env.APP_VERSION || null }, ok ? 200 : 503);
+    }
+
     if (!(await isAuthenticated(env, request))) return json({ error: 'Not signed in' }, 401);
 
     if (parts[0] === 'session') {
@@ -105,8 +123,15 @@ export async function handleApi(request, env, client) {
       });
       const byId = new Map(existing.map((p) => [normId(p.id), p]));
       const byKey = new Map(existing.map((p) => { const x = setFromPage(p); return [`${x.exercise.toLowerCase()}|${x.set}`, p]; }));
+      // Fill in the Exercise Plan link by name when the app didn't send one (e.g. older drafts).
+      let planByName = null;
+      if (b.items.some((it) => !it.remove && !it.planId)) {
+        const rows = await client.queryDatabase(SHARED.exercisePlan, { filter: { property: 'Person', select: { equals: person.name } } }).catch(() => []);
+        planByName = new Map(planFromRows(rows).count ? rows.map((r) => [plain(r.properties?.Exercise?.title || []).trim().toLowerCase(), r.id]) : []);
+      }
       const saved = {}, removed = [], errors = [];
       for (const it of b.items) {
+        if (!it.remove && !it.planId && planByName) it.planId = planByName.get(String(it.exercise || '').trim().toLowerCase()) || null;
         const match = (it.pageId && byId.get(normId(it.pageId))) || byKey.get(`${String(it.exercise || '').toLowerCase()}|${it.set}`);
         try {
           if (it.remove) {

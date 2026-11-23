@@ -61,6 +61,12 @@ export function createNotionClient(token, fetchImpl = fetch) {
     createPage(dbId, properties) {
       return call('POST', '/pages', { parent: { database_id: dbId }, properties });
     },
+    // One cheap request to check the integration can read a database or page.
+    async canRead(id, kind) {
+      if (kind === 'db') await call('POST', `/databases/${id}/query`, { page_size: 1 });
+      else await call('GET', `/blocks/${id}/children?page_size=1`);
+      return true;
+    },
     retrievePage(pageId) {
       return call('GET', `/pages/${pageId}`);
     },

@@ -227,6 +227,36 @@ async function flush(key) {
   }
 }
 const flushAll = () => (store.get(PENDING) || []).forEach((k) => flush(k));
+
+// Sets typed before Set Log saving existed (or that failed) still need sending.
+function needsSetLogSync(g) {
+  if (!g?.exercises) return false;
+  const log = g.log || {};
+  return g.exercises.some((ex) => ex.sets.some((s) => (num(s.reps) > 0 || num(s.seconds) > 0) && (!s.key || !log[s.key])));
+}
+function catchUpGymSaves() {
+  for (const k of Object.keys(localStorage)) {
+    if (!/^gym:[a-z]+:\d{4}-\d{2}-\d{2}$/.test(k)) continue;
+    const g = store.get(k);
+    if (!needsSetLogSync(g)) continue;
+    g.log ||= {};
+    g.sessionId ||= `${g.date}-${state.people.find((p) => p.id === g.person)?.name || g.person}-${g.choice?.kind === 'strength' ? g.choice.letter : g.choice?.kind === 'cardio' ? 'Cardio' : 'Other'}`;
+    for (const ex of g.exercises) for (const s of ex.sets) s.key ||= newKey();
+    store.set(k, g);
+    scheduleSave(k, 800);
+  }
+}
+async function checkHealth() {
+  try {
+    const res = await fetch('/api/health');
+    const h = await res.json();
+    if (h.ok) return;
+    const bad = Object.entries(h.checks || {}).filter(([, v]) => v !== 'ok').map(([k]) => k);
+    const b = $('#banner');
+    b.hidden = false;
+    b.textContent = `⚠️ Can't reach in Notion: ${bad.join(', ')}. In Notion, open that page → ••• → Connections → add the Coach app.`;
+  } catch { /* offline: ignore */ }
+}
 window.addEventListener('online', flushAll);
 document.addEventListener('visibilitychange', () => { if (document.hidden) flushAll(); });
 
@@ -343,6 +373,8 @@ async function start() {
     renderTabs();
     render();
     flushAll();
+    catchUpGymSaves();
+    if (!session.mock) checkHealth();
   } catch (err) {
     if (err.message !== 'Please sign in') { $('#main').hidden = false; $('#view').innerHTML = `<div class="card error">${esc(err.message)}</div>`; }
   }
@@ -619,6 +651,7 @@ async function renderGym(view, alive) {
   g.sessionId ||= `${iso}-${personName()}-${g.choice.kind === 'strength' ? g.choice.letter : g.choice.kind === 'cardio' ? 'Cardio' : 'Other'}`;
   for (const ex of g.exercises) for (const s of ex.sets) s.key ||= newKey();
   store.set(key, g);
+  if (needsSetLogSync(g)) scheduleSave(key, 800);
   const last = lastByExercise(hist, iso);
   const letters = strengthLetters(routine);
   const versions = g.choice.kind === 'strength' ? Object.keys(routine.days[g.choice.letter]?.versions || {}) : [];
